@@ -89,6 +89,8 @@ h32 detect                                    # run detector + recorder (Ctrl-C 
 h32 detect test-event                         # fire one event to verify snapshot+clip
 ```
 
+- **Live monitor:** `h32 detect` opens a browser screen at `http://127.0.0.1:8090/` (and prints the link) — live video with **bounding boxes**, a clock/REC indicator, and a recent-events sidebar (snapshot thumbnails + clip links). Plain `h32` is the AI-free viewer; `h32 detect` is the AI monitor.
+- **Email alerts (optional, off by default):** `cp detector/secrets.json.example detector/secrets.json`, fill SMTP (Gmail/Workspace → 16-char App Password), set `email.enabled=true` + `email.to` in `config.json`; test with `../.venv/bin/python detector/notify.py`. Snapshot is attached; rate-limited by `min_gap_secs`.
 - **Detection:** MegaDetector v6 (classes: animal / person / vehicle) loaded straight through
   ultralytics on Apple-Silicon MPS. `vehicle` is ignored (the Weber BBQ trips it). CLAHE
   contrast boost helps the dark IR image. Temporal confirmation (`min_hits`/`window`) + a
