@@ -18,5 +18,13 @@
   "preroll": 20,
   "postroll": 15,
   "seg_secs": 2,
-  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space; set via the calibrate tool. Detection ignores 'vehicle' (the BBQ trips it)."
+  "monitor_port": 8090,
+  "open_browser": true,
+  "email": {
+    "enabled": false,
+    "to": "***REMOVED-EMAIL***",
+    "trigger_on": ["RACCOON", "ANIMAL", "PERSON"],
+    "min_gap_secs": 120
+  },
+  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example)."
 }

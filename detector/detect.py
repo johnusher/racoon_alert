@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 """
-h32 animal detector.
+h32 animal detector + live monitor + recorder.
 
-Polls the camera (via go2rtc), runs MegaDetector to find animals / people, applies
-an optional pond ROI + confidence + temporal confirmation (robust to wind-shake and
-fluttering leaves because it's pure object detection, no motion), and on a confirmed
-event saves an annotated snapshot and a pre-roll clip (audio+video) via the recorder.
+Polls the camera (via go2rtc), runs MegaDetector to find animals / people, draws live
+bounding boxes on a monitor screen (auto-opens in the browser), and on a confirmed event
+saves an annotated snapshot + a pre-roll clip (audio+video) and optionally emails an alert.
 
-Special raccoon warning: MegaDetector reports generic 'animal'; classify_raccoon() is
-the hook for a raccoon-specific stage (see README 'next steps').
+Pure object detection (no motion) → robust to wind camera-shake and fluttering leaves.
+Special raccoon warning: classify_raccoon() is the hook for a raccoon-specific stage.
 """
-import os, sys, json, time, threading, urllib.request
+import os, sys, json, time, threading, urllib.request, webbrowser
 from collections import deque
 import numpy as np, cv2, torch
 from ultralytics import YOLO
 from recorder import CircularRecorder
+from server import MonitorServer
+from notify import EmailNotifier
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 cfg = json.load(open(os.path.join(BASE, "config.json")))
 DEVICE = cfg.get("device", "mps") if torch.backends.mps.is_available() else "cpu"
 
 model = YOLO(os.path.join(BASE, cfg["model"]))
-NAMES = model.names                                   # {0:animal,1:person,2:vehicle}
+NAMES = model.names                                       # {0:animal,1:person,2:vehicle}
 conf_map = cfg["conf"]; min_conf = min(conf_map.values())
 ignore = set(cfg.get("ignore_classes", []))
 imgsz = cfg["imgsz"]; fps = cfg.get("fps", 3)
@@ -33,10 +34,13 @@ roi = np.array(cfg["roi"], np.int32) if cfg.get("roi") else None
 exclude = np.array(cfg["exclude_roi"], np.int32) if cfg.get("exclude_roi") else None
 events_dir = os.path.join(BASE, "events"); os.makedirs(events_dir, exist_ok=True)
 logf = open(os.path.join(events_dir, "events.log"), "a")
+COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120)}
 
 rec = CircularRecorder(cfg["rtsp_main"], os.path.join(BASE, "buffer"), events_dir,
                        buffer_secs=cfg["buffer_secs"], seg_secs=cfg["seg_secs"],
                        preroll=cfg["preroll"], postroll=cfg["postroll"])
+monitor = MonitorServer(cfg.get("monitor_port", 8090), events_dir, fps=fps)
+notifier = EmailNotifier(os.path.join(BASE, "secrets.json"), cfg.get("email"))
 
 def grab():
     try:
@@ -52,13 +56,13 @@ def enhance(img):
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 def in_roi(box):
-    pt = (int((box[0] + box[2]) / 2), int(box[3]))     # foot point (bottom-center)
+    pt = (int((box[0] + box[2]) / 2), int(box[3]))       # foot point
     if roi is not None and cv2.pointPolygonTest(roi, pt, False) < 0: return False
     if exclude is not None and cv2.pointPolygonTest(exclude, pt, False) >= 0: return False
     return True
 
 def classify_raccoon(crop):
-    """Hook for a raccoon-specific classifier (Roboflow/CLIP). None = not yet implemented."""
+    """Hook for a raccoon-specific classifier (Roboflow/CLIP). None = not implemented yet."""
     return None
 
 def detect(img):
@@ -69,66 +73,107 @@ def detect(img):
         if cls in ignore or conf < conf_map.get(cls, 1.0) or not in_roi(box):
             continue
         dets.append((cls, conf, box))
-    return dets, r
+    return dets
+
+def draw_overlay(img, dets, recording=False, banner=None):
+    im = img.copy(); W = im.shape[1]
+    if roi is not None: cv2.polylines(im, [roi], True, (0, 200, 120), 2)
+    for c, cf, box in dets:
+        col = COLORS.get(c, (80, 80, 255))
+        cv2.rectangle(im, (box[0], box[1]), (box[2], box[3]), col, 2)
+        cv2.putText(im, f"{c} {cf:.2f}", (box[0], max(18, box[1] - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
+    cv2.rectangle(im, (0, 0), (W, 30), (15, 17, 20), -1)
+    cv2.putText(im, f"h32 detector   {time.strftime('%Y-%m-%d %H:%M:%S')}", (8, 21),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (230, 230, 235), 1)
+    if recording:
+        cv2.circle(im, (W - 96, 15), 7, (80, 80, 255), -1)
+        cv2.putText(im, "REC", (W - 82, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 255), 2)
+    if banner:
+        cv2.putText(im, f"{banner} DETECTED", (W // 2 - 150, 64),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (60, 200, 255), 3)
+    return im
+
+def publish(img, dets, recording=False, banner=None):
+    im = draw_overlay(img, dets, recording, banner)
+    if im.shape[1] > 1280:
+        im = cv2.resize(im, (1280, int(1280 * im.shape[0] / im.shape[1])))
+    ok, buf = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if ok: monitor.update_frame(buf.tobytes())
 
 def log(msg):
-    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}"
-    logf.write(line + "\n"); logf.flush()
+    logf.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n"); logf.flush()
 
-def fire_event(img, r, dets, forced_tag=None):
+def fire_event(img, dets, forced_tag=None):
     labels = {c for c, _, _ in dets}
     racc = None
     for c, cf, box in sorted((d for d in dets if d[0] == "animal"),
                              key=lambda d: -(d[2][2]-d[2][0])*(d[2][3]-d[2][1])):
         racc = classify_raccoon(img[box[1]:box[3], box[0]:box[2]]); break
     tag = forced_tag or ("RACCOON" if racc else ("ANIMAL" if "animal" in labels else "PERSON"))
+    detail = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
     ts = time.strftime("%Y%m%d_%H%M%S"); name = f"{ts}_{tag.lower()}"
-    cv2.imwrite(os.path.join(events_dir, f"{name}.jpg"), r.plot())
-    status = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
-    print(f"\n🔔 {tag}: {status}  → snapshot {name}.jpg, recording clip…")
-    log(f"{tag}  {status}  snapshot={name}.jpg")
-    threading.Thread(target=lambda n=name: log(f"clip: {os.path.basename(rec.save_event(n) or 'FAILED')}"),
-                     daemon=True).start()
+    snap = f"{name}.jpg"
+    cv2.imwrite(os.path.join(events_dir, snap), draw_overlay(img, dets, banner=tag))
+    print(f"\n🔔 {tag}: {detail}  → snapshot {snap}, recording clip…")
+    log(f"{tag}  {detail}  snapshot={snap}")
+    monitor.add_event(tag, snap, detail)
+    notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap))
+    def _save():
+        clip = rec.save_event(name)
+        if clip: monitor.set_clip(snap, os.path.basename(clip))
+        log(f"clip: {os.path.basename(clip) if clip else 'FAILED'}")
+    threading.Thread(target=_save, daemon=True).start()
     return name
 
+# ---- run ----
 TEST = len(sys.argv) > 1 and sys.argv[1] == "test-event"
-print(f"h32 detector: device={DEVICE}, model={cfg['model']}, {fps}fps"
-      f"{' [TEST-EVENT]' if TEST else ''}. Ctrl-C to stop.")
+port = cfg.get("monitor_port", 8090)
+url = f"http://127.0.0.1:{port}/"
+monitor.start(); monitor.status = "live"
 rec.start()
+print(f"h32 detector: device={DEVICE}, model={cfg['model']}, {fps}fps"
+      f"{' [TEST-EVENT]' if TEST else ''}")
+print(f"👁  LIVE MONITOR: {url}   (video + boxes; records + alerts on detection)")
+if cfg.get("open_browser", True) and not TEST and not os.environ.get("H32_NO_BROWSER"):
+    try: webbrowser.open(url)
+    except Exception: pass
 
 if TEST:
-    print("warming up buffer (8s)…"); time.sleep(8)
+    print("warming up (8s)…"); time.sleep(8)
     img = grab()
-    if img is None:
-        print("no frame — is go2rtc (h32) running?"); rec.stop(); sys.exit(1)
-    dets, r = detect(enhance(img))
-    print(f"forcing a test event (real detections: {[(c, round(cf,2)) for c,cf,_ in dets]})")
-    name = fire_event(img, r, dets or [("test", 1.0, [0, 0, 20, 20])], forced_tag="TEST")
+    if img is None: print("no frame — is go2rtc (h32) running?"); rec.stop(); sys.exit(1)
+    dets = detect(enhance(img)); publish(img, dets, recording=True, banner="TEST")
+    print(f"forcing test event (real detections: {[(c, round(cf,2)) for c,cf,_ in dets]})")
+    name = fire_event(img, dets or [("test", 1.0, [40, 40, 300, 300])], forced_tag="TEST")
     time.sleep(cfg["postroll"] + 5)
-    print(f"done → events/{name}.jpg and events/{name}.mp4"); rec.stop(); sys.exit(0)
+    print(f"done → events/{name}.jpg + events/{name}.mp4 (monitor: {url})"); rec.stop(); sys.exit(0)
 
 hits = deque(maxlen=window)
-last_event = last_hb = 0.0
+last_event = last_hb = record_until = 0.0
 frames = 0
 try:
     while True:
         t = time.time()
         img = grab()
         if img is None:
-            print("\r[no frame — is go2rtc/h32 running?]     ", end="", flush=True)
-            time.sleep(1); continue
+            monitor.status = "no camera frame"
+            print("\r[no frame — is go2rtc/h32 running?]     ", end="", flush=True); time.sleep(1); continue
         frames += 1
-        dets, r = detect(enhance(img))
+        dets = detect(enhance(img))
         interesting = [d for d in dets if d[0] in ("animal", "person")]
         hits.append(1 if interesting else 0)
+        recording = t < record_until
+        monitor.recording = recording
+        publish(img, dets, recording=recording,
+                banner=(interesting[0][0].upper() if recording and interesting else None))
         status = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
         print(f"\r[{time.strftime('%H:%M:%S')}] {status:44} hits={sum(hits)}/{len(hits)}   ", end="", flush=True)
-        if t - last_hb > 15:                       # newline heartbeat so logs show progress
-            last_hb = t
-            print(f"\n[{time.strftime('%H:%M:%S')}] running: {frames} frames analyzed, latest: {status}")
+        if t - last_hb > 15:
+            last_hb = t; print(f"\n[{time.strftime('%H:%M:%S')}] running: {frames} frames, latest: {status}  (monitor {url})")
         if interesting and sum(hits) >= min_hits and (t - last_event) > cooldown:
-            last_event = t
-            fire_event(img, r, interesting)
+            last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
+            fire_event(img, interesting)
         dt = 1.0 / fps - (time.time() - t)
         if dt > 0: time.sleep(dt)
 except KeyboardInterrupt:

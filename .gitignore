@@ -23,3 +23,6 @@ detector/models/*.pt
 detector/samples/_*.jpg
 
 .DS_Store
+
+# email credentials
+detector/secrets.json
