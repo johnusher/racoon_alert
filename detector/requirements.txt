@@ -1,0 +1,14 @@
+# h32 detector deps. Install into the project venv:
+#   ../.venv/bin/pip install -r requirements.txt
+# Then fetch the model:  ./get-model.sh
+#
+# NOTE: we load MegaDetector v6 weights *directly* through ultralytics (see detect.py) —
+# the PytorchWildlife package's own loader pulls an old yolov5 that breaks on Python 3.14,
+# so it is deliberately NOT required here.
+ultralytics
+opencv-python
+numpy
+torch
+torchvision
+# for the PTZ capture tooling (capture/):
+scapy

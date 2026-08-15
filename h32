@@ -5,6 +5,8 @@
 #   h32 restart    restart it
 #   h32 status     show whether it's running
 #   h32 log        tail the go2rtc log
+#   h32 detect     run the animal detector + recorder (needs go2rtc; Ctrl-C to stop)
+#   h32 detect test-event   fire one test event to verify snapshot+recording
 #
 # The app is a self-contained local web app (go2rtc -> WebRTC) at http://127.0.0.1:1984/
 
@@ -14,21 +16,28 @@ URL="http://127.0.0.1:${PORT}/"
 BIN="$DIR/go2rtc"
 CFG="$DIR/go2rtc.yaml"
 LOG="$DIR/go2rtc.log"
+VENV="$DIR/.venv"
 
 up() { nc -z 127.0.0.1 $PORT 2>/dev/null; }
 
+ensure_up() {
+  up && return 0
+  echo "h32: starting go2rtc…"
+  nohup "$BIN" -config "$CFG" >"$LOG" 2>&1 &
+  for i in {1..40}; do up && break; sleep 0.25; done
+  up
+}
+
 start() {
-  if up; then
-    echo "h32: already running"
-  else
-    echo "h32: starting go2rtc…"
-    nohup "$BIN" -config "$CFG" >"$LOG" 2>&1 &
-    for i in {1..40}; do up && break; sleep 0.25; done
-    if up; then echo "h32: up on $URL"; else
-      echo "h32: FAILED to start — check $LOG" >&2; return 1; fi
-  fi
-  echo "h32: opening $URL"
+  ensure_up || { echo "h32: FAILED to start — check $LOG" >&2; return 1; }
+  echo "h32: up on $URL — opening"
   open "$URL"
+}
+
+detect() {
+  ensure_up || { echo "h32: go2rtc failed — check $LOG" >&2; return 1; }
+  echo "h32: starting detector (Ctrl-C to stop)…"
+  exec "$VENV/bin/python" "$DIR/detector/detect.py" "$@"
 }
 
 stop() {
@@ -42,5 +51,6 @@ case "${1:-start}" in
   restart)  stop; sleep 0.6; start ;;
   status)   up && echo "h32: running on $URL" || echo "h32: not running" ;;
   log)      tail -n 40 -f "$LOG" ;;
-  *)        echo "usage: h32 [start|stop|restart|status|log]" ;;
+  detect)   shift; detect "$@" ;;
+  *)        echo "usage: h32 [start|stop|restart|status|log|detect]" ;;
 esac

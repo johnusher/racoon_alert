@@ -47,10 +47,12 @@ Then `h32` (add the alias if it isn't already: `alias h32="$PWD/h32"` in `~/.zsh
 | Live 1080p / 360p video | ✅ working (WebRTC, sub-second; MSE fallback) |
 | Listen to camera mic | ✅ working (in the stream) |
 | Digital zoom + pan, snapshot, fullscreen | ✅ working (browser-side) |
-| **Mechanical PTZ** (pan/tilt the lens) | ⏳ pending — needs a one-time app packet capture |
-| **Two-way talk** | ⏳ pending — proprietary audio uplink |
+| **Animal/person detector + pre-roll recorder** | ✅ working (`h32 detect`, see `detector/`) |
+| **Mechanical PTZ** (pan/tilt the lens) | ⛔ parked — cloud-brokered; local replay doesn't work on this firmware (see notes) |
+| **Two-way talk** | ⛔ parked — same proprietary cloud path |
+| Raccoon-*specific* alert (vs any animal) | ⏳ next — needs a raccoon classifier stage |
 
-The 🎛 drawer shows the PTZ/talk buttons, disabled, until we capture the command set.
+The 🎛 drawer shows the PTZ/talk buttons disabled — parked, see notes below.
 
 ## Camera reference
 
@@ -74,12 +76,44 @@ camera (RTSP) ──► go2rtc ──► WebRTC/MSE ──► browser (web/index
 - `web/` — the viewer: `index.html` (UI) + `video-rtc.js` / `video-stream.js` (official go2rtc player, vendored so it's served same-origin).
 - `h32` — launcher script (registered as an `alias` in `~/.zshrc`).
 
+## Animal detector + recorder (`detector/`)
+
+Detects animals / people on the camera feed and saves a snapshot + a **pre-roll clip
+(video + audio)** when something shows up. Pure object detection (MegaDetector) — no
+motion/optical-flow, so it's robust to the wind camera-shake and fluttering foliage.
+
+```
+./detector/get-model.sh                       # one-time: fetch MegaDetector weights (~50MB)
+../.venv/bin/pip install -r detector/requirements.txt
+h32 detect                                    # run detector + recorder (Ctrl-C to stop)
+h32 detect test-event                         # fire one event to verify snapshot+clip
+```
+
+- **Detection:** MegaDetector v6 (classes: animal / person / vehicle) loaded straight through
+  ultralytics on Apple-Silicon MPS. `vehicle` is ignored (the Weber BBQ trips it). CLAHE
+  contrast boost helps the dark IR image. Temporal confirmation (`min_hits`/`window`) + a
+  cooldown suppress false positives.
+- **Recording:** `recorder.py` keeps a rolling ~120s circular buffer of 2s segments (video
+  copy + AAC audio) from go2rtc's RTSP restream; on an event it assembles
+  `[trigger-preroll … trigger+postroll]` into `detector/events/<ts>_<tag>.mp4`.
+- **Output:** annotated `…​.jpg` snapshot + `…​.mp4` clip + a line in `detector/events/events.log`.
+- **Tuning:** everything is in `detector/config.json` — `conf` thresholds, `imgsz`, `fps`,
+  `roi`/`exclude_roi` polygons (1920×1080 space) to focus on the pond area, buffer/pre/post-roll.
+- **Known limits / next steps:** (1) *raccoon-specific* alerting is a stub —
+  `classify_raccoon()` in `detect.py` is where a raccoon classifier (Roboflow model or CLIP
+  zero-shot on the crop) plugs in; today every animal is tagged `ANIMAL`. (2) Very dark,
+  distant, foliage-occluded animals (like the first test raccoon) can be missed per-frame —
+  foreground visits register fine, and continuous monitoring catches a visit across its many
+  frames. (3) No pond ROI set yet (whole frame). (4) The pond water isn't in view, so
+  "splashing" is detected as *raccoon present*, not via water motion.
+
 ## Reverse-engineering notes (so we don't re-derive)
 
 - ONVIF on this camera exposes **video + mic audio only**. It advertises a PTZ service and audio *outputs*, but PTZ `GetNodes`/profiles are empty and audio-output ops fault — verified a `ContinuousMove` produces **zero** frame movement. So neither PTZ nor talk is reachable via ONVIF.
 - The camera is the **IPC365 / "360Eyes"** platform (app: **IPC360**). Its PTZ + talk run over a **proprietary TCP protocol on port 23456**.
-- PTZ protocol *structure* is known (from `MiguelDLM/360eyes_controller`): 68-byte packets, `pan`=int32 @ offset 40, `tilt` @ 44, `zoom` @ 48; `stop`=zero velocities; no auth/handshake. **But** the fixed header carries a device/session token — that project's bytes moved nothing on our camera (tested both ports, multiple magnitudes).
-- ➡️ **Next step to enable PTZ/talk:** capture the IPC360 app moving our camera (ARP-spoof MITM on the LAN via the Mac), read the real 23456 bytes, and replicate them in a small control server that the UI's 🎛 buttons call. Talk is a follow-on (live audio uplink, harder).
+- PTZ protocol *structure* is known (from `MiguelDLM/360eyes_controller`): 68-byte packets to :23456, `pan`=int32 @ off 40, `tilt` @ 44, `zoom` @ 48; magic `cc dd ee ff`. Our camera's device constant is `e4 12 69 00` (their older cam used `e3`), device id `d8 a4 c0 3b`.
+- **Local replay does NOT work on our firmware (V3.15.73).** ~15 formulations tested (their bytes, our `e4` constant, our captured device id, hello-handshake, both ports, big velocities) — all produced **zero** frame movement. This firmware's PTZ is **cloud-brokered**: the app sends pan/tilt to Victure's cloud (`18.158.11.57`), and the phone barely talks to the camera locally (only keepalives).
+- The camera↔cloud link is **plaintext** `cc dd ee ff` (no TLS). A transparent MITM proxy could capture the real cloud→camera pan command and inject our own — but it's invasive and must stay in the path, so **PTZ/talk are parked**. Capture + analysis tooling is in `capture/` (`capture_ptz.py`, `capture_cloud.py`, `parse_*.py`).
 
 ## Raspberry Pi (later)
 
@@ -95,4 +129,6 @@ go2rtc.yaml      config (camera streams + server)
 go2rtc.log       runtime log
 web/index.html   viewer UI
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
+detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
+capture/         PTZ/cloud reverse-engineering + capture tooling
 ```

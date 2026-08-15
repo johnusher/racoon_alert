@@ -112,7 +112,10 @@ def on_pkt(pkt):
 def cleanup(*_):
     stop.set(); restore()
     if pkts:
-        wrpcap(PCAP, pkts); print(f"[*] saved {len(pkts)} packets -> {PCAP}")
+        wrpcap(PCAP, pkts)
+        try: os.chmod(PCAP, 0o644)
+        except Exception: pass
+        print(f"[*] saved {len(pkts)} packets -> {PCAP}")
     else:
         print("[!] no control-port packets captured — see notes below.")
     os._exit(0)
@@ -120,11 +123,14 @@ def cleanup(*_):
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
+DURATION = int(sys.argv[2]) if len(sys.argv) > 2 else 120
 t = threading.Thread(target=spoof_loop, daemon=True); t.start()
 print(f"\n[*] MITM active. Now PAN the camera in the IPC360 app (right/left/up/down/zoom).")
-print(f"[*] Watching ports {sorted(PORTS)} between phone and camera. Ctrl-C to finish.\n")
+print(f"[*] Watching ports {sorted(PORTS)} between phone and camera.")
+print(f"[*] Auto-stops in {DURATION}s (or press Ctrl-C).\n")
 bpf = f"tcp and host {CAMERA_IP} and host {PHONE_IP}"
 try:
-    sniff(iface=IFACE, filter=bpf, prn=on_pkt, store=False)
+    sniff(iface=IFACE, filter=bpf, prn=on_pkt, store=False, timeout=DURATION)
 except Exception as e:
-    print("[!] sniff error:", e); cleanup()
+    print("[!] sniff error:", e)
+cleanup()
