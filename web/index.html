@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>h32 · camera</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#14181d; --panel-2:#1b2027; --line:#262d36;
+    --txt:#e7ecf2; --dim:#8b97a6; --accent:#4cc2ff; --accent-dim:#2b6b8c;
+    --good:#3ad29f; --warn:#ffcc66; --bad:#ff6b6b; --shadow:0 6px 24px rgba(0,0,0,.45);
+    --r:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--txt);
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;
+    display:flex; flex-direction:column; overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  /* top bar */
+  header{
+    display:flex; align-items:center; gap:14px; padding:10px 16px;
+    background:linear-gradient(180deg,#14181d,#101317); border-bottom:1px solid var(--line);
+    z-index:5;
+  }
+  .brand{font-weight:700; letter-spacing:.5px; font-size:15px}
+  .brand b{color:var(--accent)}
+  .camname{color:var(--dim); font-size:12.5px}
+  .spacer{flex:1}
+  .pill{
+    display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+    background:var(--panel-2); border:1px solid var(--line); font-size:12px; color:var(--dim);
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);transition:background .3s}
+  .dot.live{background:var(--good); box-shadow:0 0 8px var(--good)}
+  .dot.wait{background:var(--warn)}
+  .dot.err{background:var(--bad)}
+
+  /* stage */
+  main{position:relative; flex:1; min-height:0; background:#000; overflow:hidden}
+  .stage{position:absolute; inset:0; overflow:hidden; display:flex; align-items:center; justify-content:center}
+  video-stream{display:block; width:100%; height:100%; transition:transform .12s ease-out; will-change:transform}
+  video-stream video{width:100%; height:100%; object-fit:contain; background:#000}
+  video-stream .info{display:none!important}
+
+  /* unmute overlay */
+  .unmute{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px;
+    flex-direction:column; background:rgba(4,6,9,.35); cursor:pointer; z-index:6; backdrop-filter:blur(1px);
+  }
+  .unmute .btn-lg{
+    background:var(--accent); color:#04222f; font-weight:700; border:none; padding:14px 22px;
+    border-radius:999px; font-size:15px; box-shadow:var(--shadow); cursor:pointer;
+  }
+  .unmute small{color:#cfe6f2}
+
+  /* zoom badge */
+  .zbadge{
+    position:absolute; top:12px; left:12px; z-index:4; padding:4px 9px; border-radius:8px;
+    background:rgba(10,13,17,.7); border:1px solid var(--line); color:var(--dim); font-size:12px;
+    font-variant-numeric:tabular-nums; opacity:0; transition:opacity .2s; pointer-events:none;
+  }
+  .zbadge.show{opacity:1}
+
+  /* bottom control bar */
+  .controls{
+    position:absolute; left:0; right:0; bottom:0; z-index:4;
+    display:flex; align-items:center; gap:8px; padding:12px 14px;
+    background:linear-gradient(0deg,rgba(9,11,14,.92),rgba(9,11,14,0));
+    flex-wrap:wrap;
+  }
+  .grp{display:flex; align-items:center; gap:6px; background:rgba(20,24,29,.8);
+       border:1px solid var(--line); border-radius:10px; padding:5px 6px; backdrop-filter:blur(6px)}
+  button.ico, .grp button{
+    appearance:none; border:none; background:transparent; color:var(--txt); cursor:pointer;
+    width:36px; height:34px; border-radius:8px; font-size:15px; display:inline-flex;
+    align-items:center; justify-content:center; transition:background .15s,color .15s;
+  }
+  .grp button:hover{background:var(--panel-2)}
+  .grp button:active{transform:translateY(1px)}
+  .grp button.on{color:var(--accent)}
+  .grp label{color:var(--dim); font-size:11.5px; padding:0 4px}
+  input[type=range]{accent-color:var(--accent); width:84px}
+  .segbtn{padding:0 12px; width:auto; font-size:12.5px; color:var(--dim)}
+  .segbtn.on{color:var(--accent); background:var(--panel-2)}
+  .zlabel{min-width:44px; text-align:center; color:var(--dim); font-variant-numeric:tabular-nums; font-size:12.5px}
+
+  /* pending PTZ / talk drawer */
+  .drawer{
+    position:absolute; right:14px; bottom:66px; z-index:5; width:200px;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    box-shadow:var(--shadow); overflow:hidden; transform:translateY(8px); opacity:0; pointer-events:none;
+    transition:opacity .2s, transform .2s;
+  }
+  .drawer.open{opacity:1; transform:none; pointer-events:auto}
+  .drawer h4{margin:0; padding:10px 12px; font-size:12px; letter-spacing:.4px; color:var(--dim);
+    background:var(--panel-2); border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center}
+  .tag{font-size:9.5px; color:var(--warn); border:1px solid var(--accent-dim); padding:1px 6px; border-radius:999px; letter-spacing:.3px}
+  .dpad{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; padding:12px}
+  .dpad button{
+    height:40px; border-radius:9px; border:1px solid var(--line); background:var(--panel-2);
+    color:var(--txt); font-size:15px; cursor:not-allowed; opacity:.5;
+  }
+  .dpad .empty{visibility:hidden}
+  .talkrow{padding:0 12px 12px; display:flex; gap:8px}
+  .talkrow button{
+    flex:1; height:38px; border-radius:9px; border:1px solid var(--line); background:var(--panel-2);
+    color:var(--txt); cursor:not-allowed; opacity:.5; font-size:13px;
+  }
+  .note{padding:0 12px 12px; color:var(--dim); font-size:11px; line-height:1.5}
+
+  /* toast */
+  .toast{
+    position:absolute; left:50%; bottom:74px; transform:translateX(-50%) translateY(10px);
+    background:var(--panel-2); border:1px solid var(--line); color:var(--txt);
+    padding:9px 15px; border-radius:10px; font-size:13px; box-shadow:var(--shadow);
+    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:8; max-width:80vw;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%)}
+  @media (max-width:560px){ .drawer{display:none} .camname{display:none} input[type=range]{width:60px} }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand"><b>h32</b></span>
+    <span class="camname" id="camname">Victure PC530 · IPC365</span>
+    <span class="spacer"></span>
+    <span class="pill"><span class="dot" id="dot"></span><span id="status">connecting…</span></span>
+  </header>
+
+  <main id="main">
+    <div class="stage" id="stage">
+      <video-stream id="cam"></video-stream>
+    </div>
+
+    <div class="zbadge" id="zbadge">1.0×</div>
+
+    <div class="unmute" id="unmute">
+      <button class="btn-lg">🔊&nbsp; Tap for sound</button>
+      <small>video is live · click to enable audio</small>
+    </div>
+
+    <!-- pending mechanical PTZ + talk -->
+    <div class="drawer" id="drawer">
+      <h4>Camera controls <span class="tag">PENDING CAPTURE</span></h4>
+      <div class="dpad">
+        <button class="empty"></button><button title="Tilt up" disabled>▲</button><button class="empty"></button>
+        <button title="Pan left" disabled>◀</button><button title="Home" disabled>⌂</button><button title="Pan right" disabled>▶</button>
+        <button class="empty"></button><button title="Tilt down" disabled>▼</button><button class="empty"></button>
+      </div>
+      <div class="talkrow">
+        <button disabled>🎙 Talk</button>
+        <button disabled title="zoom">🔍 Zoom</button>
+      </div>
+      <div class="note">Physical pan/tilt &amp; two-way talk use the camera's proprietary protocol. These activate once we capture the command set from the IPC360 app.</div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="controls">
+      <div class="grp">
+        <button id="btnMute" class="ico" title="Mute / unmute (m)">🔇</button>
+        <input id="vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
+      </div>
+      <div class="grp">
+        <button id="zOut" title="Zoom out (-)">－</button>
+        <span class="zlabel" id="zlabel">1.0×</span>
+        <button id="zIn" title="Zoom in (+)">＋</button>
+        <button id="zReset" title="Reset view (0)">⤢</button>
+      </div>
+      <div class="grp" title="Digital pan (arrow keys when zoomed)">
+        <label>PAN</label>
+        <button data-pan="0,-1">▲</button>
+        <button data-pan="-1,0">◀</button>
+        <button data-pan="1,0">▶</button>
+        <button data-pan="0,1">▼</button>
+      </div>
+      <div class="spacer" style="flex:1"></div>
+      <div class="grp">
+        <button id="segMain" class="segbtn on">1080p</button>
+        <button id="segSub" class="segbtn">360p</button>
+      </div>
+      <div class="grp">
+        <button id="btnSnap" class="ico" title="Snapshot (s)">📷</button>
+        <button id="btnCtl" class="ico" title="Camera controls">🎛</button>
+        <button id="btnFull" class="ico" title="Fullscreen (f)">⛶</button>
+      </div>
+    </div>
+  </main>
+
+<script type="module">
+import './video-stream.js';
+
+const cam    = document.getElementById('cam');
+const stage  = document.getElementById('stage');
+const dot    = document.getElementById('dot');
+const statusEl = document.getElementById('status');
+const zbadge = document.getElementById('zbadge');
+const zlabel = document.getElementById('zlabel');
+const toastEl= document.getElementById('toast');
+
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsBase  = `${wsProto}//${location.host}/api/ws`;
+let current = 'camera';               // main stream
+
+// ---- start stream ----
+cam.mode  = 'webrtc,mse';             // webrtc first, MSE fallback (both low latency on LAN)
+cam.media = 'video,audio';
+cam.background = false;
+function connect(streamName){
+  current = streamName;
+  cam.src = `${wsBase}?src=${streamName}`;
+  setStatus('wait','connecting…');
+}
+connect(current);
+
+// ---- status wiring (peek at element lifecycle) ----
+function setStatus(kind,text){
+  dot.className = 'dot ' + (kind==='live'?'live':kind==='err'?'err':'wait');
+  statusEl.textContent = text;
+}
+// video element appears after init; watch it
+let videoEl = null;
+const findVideo = () => { videoEl = cam.querySelector('video'); return videoEl; };
+const obs = new MutationObserver(()=>{ if(findVideo()) hookVideo(); });
+obs.observe(cam, {childList:true, subtree:true});
+function hookVideo(){
+  if(!videoEl || videoEl._hooked) return;
+  videoEl._hooked = true;
+  videoEl.muted = true;                       // start muted for autoplay
+  videoEl.addEventListener('playing', ()=> setStatus('live','live'));
+  videoEl.addEventListener('waiting', ()=> setStatus('wait','buffering…'));
+  videoEl.addEventListener('stalled', ()=> setStatus('wait','stalled…'));
+  applyVol();
+}
+
+// ---- audio ----
+const unmute = document.getElementById('unmute');
+const btnMute= document.getElementById('btnMute');
+const vol    = document.getElementById('vol');
+let muted = true;
+function applyVol(){
+  if(!videoEl) return;
+  videoEl.muted = muted;
+  videoEl.volume = parseFloat(vol.value);
+  btnMute.textContent = muted || videoEl.volume===0 ? '🔇' : '🔊';
+  btnMute.classList.toggle('on', !muted);
+}
+function setMuted(m){ muted = m; applyVol(); if(!m) unmute.classList.add('hide'), unmute.style.display='none'; }
+unmute.addEventListener('click', ()=> setMuted(false));
+btnMute.addEventListener('click', ()=> setMuted(!muted));
+vol.addEventListener('input', ()=>{ if(parseFloat(vol.value)>0 && muted) muted=false; unmute.style.display='none'; applyVol(); });
+
+// ---- digital zoom + pan ----
+let z = 1, panX = 0, panY = 0;            // panX/Y in [-1,1]
+const Z_MIN=1, Z_MAX=5, Z_STEP=0.25, PAN_STEP=0.18;
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function apply(){
+  z = clamp(z, Z_MIN, Z_MAX);
+  if(z===1){ panX=panY=0; }
+  panX = clamp(panX,-1,1); panY = clamp(panY,-1,1);
+  const r = stage.getBoundingClientRect();
+  const maxX = (z-1)/2 * r.width, maxY = (z-1)/2 * r.height;
+  cam.style.transform = `translate(${panX*maxX}px, ${panY*maxY}px) scale(${z})`;
+  const t = z.toFixed(2).replace(/0$/,'').replace(/\.$/,'') + '×';
+  zlabel.textContent = t; zbadge.textContent = t;
+  zbadge.classList.toggle('show', z>1);
+}
+function zoom(d){ z += d; apply(); }
+function pan(dx,dy){ if(z===1){ toast('Zoom in first to pan'); return; } panX+=dx*PAN_STEP; panY+=dy*PAN_STEP; apply(); }
+document.getElementById('zIn').onclick   = ()=> zoom(+Z_STEP);
+document.getElementById('zOut').onclick  = ()=> zoom(-Z_STEP);
+document.getElementById('zReset').onclick= ()=>{ z=1; panX=panY=0; apply(); };
+document.querySelectorAll('[data-pan]').forEach(b=>{
+  const [x,y]=b.dataset.pan.split(',').map(Number);
+  b.onclick=()=>pan(x,y);
+});
+window.addEventListener('resize', apply);
+// wheel to zoom
+stage.addEventListener('wheel', e=>{ e.preventDefault(); zoom(e.deltaY<0?+Z_STEP:-Z_STEP); }, {passive:false});
+
+// ---- snapshot ----
+document.getElementById('btnSnap').onclick = snapshot;
+function snapshot(){
+  const v = findVideo();
+  if(!v || !v.videoWidth){ toast('No frame yet'); return; }
+  const c = document.createElement('canvas');
+  c.width=v.videoWidth; c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  try{
+    c.toBlob(b=>{
+      const a=document.createElement('a');
+      const ts=new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
+      a.href=URL.createObjectURL(b); a.download=`h32-${ts}.png`; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+      toast('📷 Snapshot saved');
+    },'image/png');
+  }catch(e){ toast('Snapshot blocked: '+e.message); }
+}
+
+// ---- fullscreen ----
+document.getElementById('btnFull').onclick = ()=>{
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.getElementById('main').requestFullscreen?.();
+};
+
+// ---- stream switch ----
+const segMain=document.getElementById('segMain'), segSub=document.getElementById('segSub');
+segMain.onclick=()=>{ if(current==='camera')return; segMain.classList.add('on'); segSub.classList.remove('on'); connect('camera'); };
+segSub.onclick =()=>{ if(current==='camera_sub')return; segSub.classList.add('on'); segMain.classList.remove('on'); connect('camera_sub'); };
+
+// ---- controls drawer ----
+const drawer=document.getElementById('drawer');
+document.getElementById('btnCtl').onclick=()=>{ drawer.classList.toggle('open'); document.getElementById('btnCtl').classList.toggle('on'); };
+
+// ---- toast ----
+let toastT;
+function toast(msg){ toastEl.textContent=msg; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1900); }
+
+// ---- keyboard ----
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  switch(e.key){
+    case 'ArrowUp':    pan(0,-1); e.preventDefault(); break;
+    case 'ArrowDown':  pan(0, 1); e.preventDefault(); break;
+    case 'ArrowLeft':  pan(-1,0); e.preventDefault(); break;
+    case 'ArrowRight': pan( 1,0); e.preventDefault(); break;
+    case '+': case '=': zoom(+Z_STEP); break;
+    case '-': case '_': zoom(-Z_STEP); break;
+    case '0': z=1; panX=panY=0; apply(); break;
+    case 'f': document.getElementById('btnFull').click(); break;
+    case 'm': setMuted(!muted); break;
+    case 's': snapshot(); break;
+  }
+});
+
+// connection health: if no 'playing' within a while, hint MSE/errors
+setTimeout(()=>{ if(statusEl.textContent!=='live') setStatus('wait','negotiating…'); }, 4000);
+apply();
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# go2rtc config for the h32 camera app
+# Ingests the Victure PC530 (IPC365) RTSP and serves low-latency WebRTC to the browser.
+
+api:
+  listen: ":1984"
+  static_dir: "***REMOVED-PATH***/Documents/h32/web"   # serve the custom h32 UI
+
+log:
+  level: info
+
+streams:
+  # Main 1080p stream (video + camera mic audio)
+  camera: rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp
+  # Sub 640x360 stream (lighter; good for the Pi later)
+  camera_sub: rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=1.sdp
+
+webrtc:
+  # Host candidate so WebRTC works on localhost without external STUN
+  candidates:
+    - 127.0.0.1:8555

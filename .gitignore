@@ -1,0 +1,15 @@
+# runtime / downloaded / generated (comments on their own lines!)
+
+# media-server binary — fetch with ./get-go2rtc.sh
+go2rtc
+go2rtc.log
+
+# python venv (for PTZ capture)
+.venv/
+__pycache__/
+*.pyc
+
+# raw captures may contain credentials/tokens
+capture/*.pcap
+
+.DS_Store

@@ -1,0 +1,46 @@
+#!/bin/zsh
+# h32 — launch the local Victure PC530 camera app and open it in the browser.
+#   h32            start go2rtc (if needed) and open the viewer
+#   h32 stop       stop the go2rtc media server
+#   h32 restart    restart it
+#   h32 status     show whether it's running
+#   h32 log        tail the go2rtc log
+#
+# The app is a self-contained local web app (go2rtc -> WebRTC) at http://127.0.0.1:1984/
+
+DIR="***REMOVED-PATH***/Documents/h32"
+PORT=1984
+URL="http://127.0.0.1:${PORT}/"
+BIN="$DIR/go2rtc"
+CFG="$DIR/go2rtc.yaml"
+LOG="$DIR/go2rtc.log"
+
+up() { nc -z 127.0.0.1 $PORT 2>/dev/null; }
+
+start() {
+  if up; then
+    echo "h32: already running"
+  else
+    echo "h32: starting go2rtc…"
+    nohup "$BIN" -config "$CFG" >"$LOG" 2>&1 &
+    for i in {1..40}; do up && break; sleep 0.25; done
+    if up; then echo "h32: up on $URL"; else
+      echo "h32: FAILED to start — check $LOG" >&2; return 1; fi
+  fi
+  echo "h32: opening $URL"
+  open "$URL"
+}
+
+stop() {
+  # kill go2rtc started from this dir
+  pkill -f "$BIN -config $CFG" && echo "h32: stopped" || echo "h32: was not running"
+}
+
+case "${1:-start}" in
+  start|"") start ;;
+  stop)     stop ;;
+  restart)  stop; sleep 0.6; start ;;
+  status)   up && echo "h32: running on $URL" || echo "h32: not running" ;;
+  log)      tail -n 40 -f "$LOG" ;;
+  *)        echo "usage: h32 [start|stop|restart|status|log]" ;;
+esac
