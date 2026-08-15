@@ -5,6 +5,7 @@
   "model": "models/MDV6-yolov9-c.pt",
   "device": "mps",
   "fps": 3,
+  "display_fps": 12,
   "imgsz": 1280,
   "conf": { "animal": 0.20, "person": 0.30 },
   "ignore_classes": ["vehicle"],
