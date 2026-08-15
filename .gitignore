@@ -26,3 +26,4 @@ detector/samples/_*.jpg
 
 # email credentials
 detector/secrets.json
+detector/recorder.log

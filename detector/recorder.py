@@ -25,29 +25,44 @@ class CircularRecorder:
         os.makedirs(buffer_dir, exist_ok=True)
         os.makedirs(events_dir, exist_ok=True)
 
-    def start(self):
-        # wipe stale buffer
-        for f in glob.glob(os.path.join(self.buffer_dir, "seg_*.ts")):
-            try: os.remove(f)
-            except OSError: pass
+    def _launch(self):
         pattern = os.path.join(self.buffer_dir, "seg_%Y%m%d_%H%M%S.ts")
-        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error",
+        cmd = ["ffmpeg", "-nostdin", "-loglevel", "warning",
                "-rtsp_transport", "tcp", "-i", self.rtsp,
                "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
                "-f", "segment", "-segment_time", str(self.seg_secs),
                "-reset_timestamps", "1", "-strftime", "1", pattern]
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
-        self._janitor = threading.Thread(target=self._clean_loop, daemon=True)
-        self._janitor.start()
+        logpath = os.path.join(os.path.dirname(self.buffer_dir), "recorder.log")
+        self._log = open(logpath, "ab")
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=self._log, stderr=self._log)
+        self._proc_started = time.time()
+
+    def start(self):
+        for f in glob.glob(os.path.join(self.buffer_dir, "seg_*.ts")):
+            try: os.remove(f)
+            except OSError: pass
+        self._launch()
+        threading.Thread(target=self._maintain_loop, daemon=True).start()
         return self
 
-    def _clean_loop(self):
+    def _maintain_loop(self):
+        """Watchdog + janitor: restart ffmpeg if it dies OR stalls (no new segments); prune old."""
+        stall = max(6, 3 * self.seg_secs)
         while not self._stop.is_set():
-            cutoff = time.time() - self.buffer_secs
-            for f in glob.glob(os.path.join(self.buffer_dir, "seg_*.ts")):
+            now = time.time()
+            segs = glob.glob(os.path.join(self.buffer_dir, "seg_*.ts"))
+            newest = max((os.path.getmtime(f) for f in segs), default=0)
+            dead = self.proc is None or self.proc.poll() is not None
+            stalled = (not dead) and (now - self._proc_started > stall) and (now - newest > stall)
+            if dead or stalled:
+                if stalled and self.proc:
+                    try: self.proc.kill()
+                    except Exception: pass
+                self._launch()
+            cutoff = now - self.buffer_secs
+            for f in segs:
                 try:
-                    if os.path.getmtime(f) < cutoff:
-                        os.remove(f)
+                    if os.path.getmtime(f) < cutoff: os.remove(f)
                 except OSError:
                     pass
             self._stop.wait(self.seg_secs)
@@ -90,7 +105,7 @@ if __name__ == "__main__":
     import sys, json
     cfg_path = os.path.join(os.path.dirname(__file__), "config.json")
     cfg = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {}
-    rtsp = cfg.get("rtsp_main", "rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp")
+    rtsp = cfg.get("rtsp_camera_direct") or cfg.get("rtsp_main", "rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp")
     base = os.path.dirname(os.path.abspath(__file__))
     rec = CircularRecorder(rtsp, os.path.join(base, "buffer"), os.path.join(base, "events"),
                            buffer_secs=60, preroll=8, postroll=4)

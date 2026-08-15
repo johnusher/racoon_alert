@@ -39,7 +39,8 @@ events_dir = os.path.join(BASE, "events"); os.makedirs(events_dir, exist_ok=True
 logf = open(os.path.join(events_dir, "events.log"), "a")
 COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120)}
 
-rec = CircularRecorder(cfg["rtsp_main"], os.path.join(BASE, "buffer"), events_dir,
+rec = CircularRecorder(cfg.get("rtsp_camera_direct", cfg["rtsp_main"]),
+                       os.path.join(BASE, "buffer"), events_dir,
                        buffer_secs=cfg["buffer_secs"], seg_secs=cfg["seg_secs"],
                        preroll=cfg["preroll"], postroll=cfg["postroll"])
 monitor = MonitorServer(cfg.get("monitor_port", 8090), events_dir, fps=display_fps)
