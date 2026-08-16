@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Comprehensive parse: ALL ports phone<->camera, hunt every cc-dd-ee-ff frame."""
-import struct, collections
+import os, sys, struct, collections
 from scapy.all import rdpcap, IP, TCP, Raw
 
-PCAP = "***REMOVED-PATH***/Documents/h32/capture/ptz_capture.pcap"
-CAM, PHONE = "***REMOVED-IP***", "***REMOVED-IP***"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import h32env                                   # camera/LAN settings from local.env
+
+PCAP = os.path.join(HERE, "ptz_capture.pcap")
+CAM, PHONE = h32env.CAMERA_IP, h32env.PHONE_IP
 MAGIC = b"\xcc\xdd\xee\xff"
 
 pkts = rdpcap(PCAP)

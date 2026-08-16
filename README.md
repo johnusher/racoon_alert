@@ -21,11 +21,20 @@ Viewer: <http://127.0.0.1:1984/>
 The go2rtc binary is gitignored (not stored in the repo). After cloning:
 
 ```
-./get-go2rtc.sh        # download the pinned go2rtc binary
+cp local.env.example local.env    # then edit: camera IP + password
+./get-go2rtc.sh                   # download the pinned go2rtc binary
 python3 -m venv .venv && ./.venv/bin/pip install scapy   # only needed for PTZ capture
 ```
 
 Then `h32` (add the alias if it isn't already: `alias h32="$PWD/h32"` in `~/.zshrc`).
+
+**`local.env` is where every site-specific value lives** — camera address, camera
+password, your LAN layout, the alert e-mail address. It is gitignored, and nothing else
+in the repo hardcodes any of it: `h32` exports these vars so go2rtc can expand the
+`${H32_*}` placeholders in `go2rtc.yaml`, and the Python tools read the same file via
+`h32env.py`. SMTP credentials are separate again, in `detector/secrets.json`.
+
+Check what it resolved to with `./.venv/bin/python h32env.py`.
 
 ## Controls
 
@@ -56,12 +65,13 @@ The 🎛 drawer shows the PTZ/talk buttons disabled — parked, see notes below.
 
 ## Camera reference
 
-- **IP:** `***REMOVED-IP***`  (RTSP `:554`, ONVIF `:8080`, proprietary `:23456`/`:34567`)
-- **ONVIF/RTSP login:** `admin` / `<vendor default>`
-- **Main stream:** `rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp` (1080p H.264 + PCM-alaw audio)
+- **Ports:** RTSP `:554`, ONVIF `:8080`, proprietary `:23456` / `:34567`. Address and login go in `local.env`.
+- **Main stream:** `rtsp://<user>:<pass>@<camera-ip>:554/realmonitor?channel=0&stream=0.sdp` (1080p H.264 + PCM-alaw audio)
 - **Sub stream:** `…&stream=1.sdp` (640×360)
 - ⚠️ **ONVIF must stay enabled in the IPC360 app** — that's what opens `:554`/`:8080`. If you turn it off, video stops working here.
-- Security: stream is unencrypted on the LAN; default password. Fine at home — do **not** port-forward `:554` to the internet.
+- ⚠️ **Change the default password.** These cameras ship as `admin` / `<vendor default>`; the IPC360 app
+  can change it. The RTSP stream is unencrypted on the LAN either way, so treat the camera as a
+  LAN-only device and do **not** port-forward `:554` to the internet.
 
 ## How it works
 
@@ -90,7 +100,7 @@ h32 detect test-event                         # fire one event to verify snapsho
 ```
 
 - **Live monitor:** `h32 detect` opens a browser screen at `http://127.0.0.1:8090/` (and prints the link) — live video with **bounding boxes**, a clock/REC indicator, and a recent-events sidebar (snapshot thumbnails + clip links). Plain `h32` is the AI-free viewer; `h32 detect` is the AI monitor.
-- **Email alerts (optional, off by default):** `cp detector/secrets.json.example detector/secrets.json`, fill SMTP (Gmail/Workspace → 16-char App Password), set `email.enabled=true` + `email.to` in `config.json`; test with `../.venv/bin/python detector/notify.py`. Snapshot is attached; rate-limited by `min_gap_secs`.
+- **Email alerts (optional, off by default):** `cp detector/secrets.json.example detector/secrets.json`, fill SMTP (Gmail/Workspace → 16-char App Password), set `H32_EMAIL_TO` in `local.env` and `email.enabled=true` in `config.json`; test with `../.venv/bin/python detector/notify.py`. Snapshot is attached; rate-limited by `min_gap_secs`.
 - **Detection:** MegaDetector v6 (classes: animal / person / vehicle) loaded straight through
   ultralytics on Apple-Silicon MPS. `vehicle` is ignored (the Weber BBQ trips it). CLAHE
   contrast boost helps the dark IR image. Temporal confirmation (`min_hits`/`window`) + a
@@ -115,7 +125,7 @@ h32 detect test-event                         # fire one event to verify snapsho
 - The camera is the **IPC365 / "360Eyes"** platform (app: **IPC360**). Its PTZ + talk run over a **proprietary TCP protocol on port 23456**.
 - PTZ protocol *structure* is known (from `MiguelDLM/360eyes_controller`): 68-byte packets to :23456, `pan`=int32 @ off 40, `tilt` @ 44, `zoom` @ 48; magic `cc dd ee ff`. Our camera's device constant is `e4 12 69 00` (their older cam used `e3`), device id `d8 a4 c0 3b`.
 - **Local replay does NOT work on our firmware (V3.15.73).** ~15 formulations tested (their bytes, our `e4` constant, our captured device id, hello-handshake, both ports, big velocities) — all produced **zero** frame movement. This firmware's PTZ is **cloud-brokered**: the app sends pan/tilt to Victure's cloud (`18.158.11.57`), and the phone barely talks to the camera locally (only keepalives).
-- The camera↔cloud link is **plaintext** `cc dd ee ff` (no TLS). A transparent MITM proxy could capture the real cloud→camera pan command and inject our own — but it's invasive and must stay in the path, so **PTZ/talk are parked**. Capture + analysis tooling is in `capture/` (`capture_ptz.py`, `capture_cloud.py`, `parse_*.py`).
+- The camera↔cloud link is **plaintext** `cc dd ee ff` (no TLS). A transparent MITM proxy could capture the real cloud→camera pan command and inject our own — but it's invasive and must stay in the path, so **PTZ/talk are parked**. Capture + analysis tooling is in `capture/` (`capture_ptz.py`, `capture_cloud.py`, `parse_*.py`) — it ARP-spoofs, so it is **for your own camera on your own network only**; see [`capture/README.md`](capture/README.md).
 
 ## Raspberry Pi (later)
 
@@ -126,11 +136,19 @@ The same stream runs fullscreen on a Pi's HDMI with `mpv`/`ffmpeg` against the R
 
 ```
 h32              launcher (start/stop/restart/status/log)
+local.env        site-local settings — camera IP/password, LAN, alert address (GITIGNORED)
+local.env.example  template for the above
+h32env.py        loads local.env for the Python tools
 go2rtc           media-server binary (darwin arm64, v1.9.14)
-go2rtc.yaml      config (camera streams + server)
+go2rtc.yaml      config (camera streams + server; ${H32_*} filled from local.env)
 go2rtc.log       runtime log
 web/index.html   viewer UI
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
 detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
 capture/         PTZ/cloud reverse-engineering + capture tooling
 ```
+
+## License
+
+[MIT](LICENSE). The vendored go2rtc player in `web/` is MIT © 2022 Alexey Khit — see
+[`web/THIRD-PARTY.md`](web/THIRD-PARTY.md).

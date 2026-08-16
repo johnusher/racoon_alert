@@ -102,11 +102,12 @@ class CircularRecorder:
 
 
 if __name__ == "__main__":
-    import sys, json
-    cfg_path = os.path.join(os.path.dirname(__file__), "config.json")
-    cfg = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {}
-    rtsp = cfg.get("rtsp_camera_direct") or cfg.get("rtsp_main", "rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp")
+    import sys
     base = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.dirname(base))
+    import h32env                                          # camera URL from local.env
+    cfg = h32env.detector_config(os.path.join(base, "config.json"))
+    rtsp = cfg["rtsp_camera_direct"] or cfg["rtsp_main"]
     rec = CircularRecorder(rtsp, os.path.join(base, "buffer"), os.path.join(base, "events"),
                            buffer_secs=60, preroll=8, postroll=4)
     if len(sys.argv) > 1 and sys.argv[1] == "test":

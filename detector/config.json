@@ -1,6 +1,6 @@
 {
   "rtsp_main": "rtsp://127.0.0.1:8554/camera",
-  "rtsp_camera_direct": "rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=0.sdp",
+  "rtsp_camera_direct": null,
   "frame_url": "http://127.0.0.1:1984/api/frame.jpeg?src=camera",
   "model": "models/MDV6-yolov9-c.pt",
   "device": "mps",
@@ -23,9 +23,9 @@
   "open_browser": true,
   "email": {
     "enabled": false,
-    "to": "***REMOVED-EMAIL***",
+    "to": null,
     "trigger_on": ["RACCOON", "ANIMAL", "PERSON"],
     "min_gap_secs": 120
   },
-  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example)."
+  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example)."
 }

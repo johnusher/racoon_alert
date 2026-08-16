@@ -56,14 +56,18 @@ class EmailNotifier:
 
 if __name__ == "__main__":
     # Verify email setup:  ../.venv/bin/python notify.py
+    import sys
     base = os.path.dirname(os.path.abspath(__file__))
-    cfg = json.load(open(os.path.join(base, "config.json")))
+    sys.path.insert(0, os.path.dirname(base))
+    import h32env                                          # alert address from local.env
+    cfg = h32env.detector_config(os.path.join(base, "config.json"))
     n = EmailNotifier(os.path.join(base, "secrets.json"), {**cfg.get("email", {}), "enabled": True})
     if not n.enabled:
         print("Email not configured. Steps:\n"
               "  1. cp detector/secrets.json.example detector/secrets.json\n"
               "  2. fill in your SMTP host/user/pass (Gmail/Workspace: use a 16-char App Password)\n"
-              "  3. set email.to in detector/config.json (and email.enabled=true to arm real alerts)")
+              "  3. set H32_EMAIL_TO in local.env (and email.enabled=true in detector/config.json\n"
+              "     to arm real alerts)")
     else:
         print(f"Sending test email to {n.cfg['to']} via {n.smtp['host']}:{n.smtp.get('port',587)} …")
         n._send("[h32] test alert", "If you got this, h32 email alerts work. 🦝", None)

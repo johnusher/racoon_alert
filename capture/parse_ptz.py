@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Parse the MITM pcap: pull control-port payloads phone<->camera, decode PTZ."""
-import struct, collections
+import os, sys, struct, collections
 from scapy.all import rdpcap, IP, TCP, Raw
 
-PCAP = "***REMOVED-PATH***/Documents/h32/capture/ptz_capture.pcap"
-CAM, PHONE = "***REMOVED-IP***", "***REMOVED-IP***"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import h32env                                   # camera/LAN settings from local.env
+
+PCAP = os.path.join(HERE, "ptz_capture.pcap")
+CAM, PHONE = h32env.CAMERA_IP, h32env.PHONE_IP
 PORTS = {23456, 34567}
 
 def describe(d):

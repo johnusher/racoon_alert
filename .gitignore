@@ -27,3 +27,6 @@ detector/samples/_*.jpg
 # email credentials
 detector/secrets.json
 detector/recorder.log
+
+# site-local settings: camera address + password, LAN layout, alert address
+local.env

@@ -3,9 +3,10 @@
 Capture the CAMERA's traffic to the internet (cloud) by MITM (ARP-spoof camera<->gateway),
 to see whether cloud-delivered PTZ commands arrive in plaintext (cc-dd-ee-ff) or TLS.
 
-Run as root from the venv, then pan in the IPC360 app:
-    sudo ***REMOVED-PATH***/Documents/h32/.venv/bin/python \
-         ***REMOVED-PATH***/Documents/h32/capture/capture_cloud.py
+Point it at YOUR OWN camera on YOUR OWN network — see the note in capture/README.md.
+
+Run as root from the venv (from the repo root), then pan in the IPC360 app:
+    sudo ./.venv/bin/python capture/capture_cloud.py
 Auto-stops after 150s. Live-prints any cc-dd-ee-ff frames to/from the cloud.
 """
 import sys, os, time, struct, threading, signal, collections
@@ -16,11 +17,15 @@ if os.geteuid() != 0:
 
 from scapy.all import Ether, ARP, srp, sendp, sniff, wrpcap, IP, TCP, Raw, conf, get_if_hwaddr
 
-CAMERA_IP = "***REMOVED-IP***"
-GATEWAY_IP = "***REMOVED-IP***"
-IFACE = "en0"
-LAN_PREFIX = "192.168.1."
-PCAP = "***REMOVED-PATH***/Documents/h32/capture/cloud_capture.pcap"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import h32env                                   # camera/LAN settings from local.env
+
+CAMERA_IP = h32env.CAMERA_IP
+GATEWAY_IP = h32env.GATEWAY_IP
+IFACE = h32env.IFACE
+LAN_PREFIX = CAMERA_IP.rsplit(".", 1)[0] + "."
+PCAP = os.path.join(HERE, "cloud_capture.pcap")
 DURATION = int(sys.argv[1]) if len(sys.argv) > 1 else 150
 MAGIC = b"\xcc\xdd\xee\xff"
 conf.iface = IFACE; conf.verb = 0

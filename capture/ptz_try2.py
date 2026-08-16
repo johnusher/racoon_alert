@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Local PTZ with OUR captured device id (d8a4c03b) + OUR e4 constant. Frame-diff verified."""
-import socket, struct, subprocess, time
+import os, sys, socket, struct, subprocess, time
 
-IP="***REMOVED-IP***"; PORT=23456
-RTSP="rtsp://***REMOVED-CREDS***@***REMOVED-IP***:554/realmonitor?channel=0&stream=1.sdp"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import h32env                                   # camera settings from local.env
+
+IP=h32env.CAMERA_IP; PORT=23456
+RTSP=h32env.rtsp(1)
 W,H=80,45
 HELLO=bytes([0xcc,0xdd,0xee,0xff,0x01,0x00,0x00,0x00,0xe4,0x12,0x69,0x00,0x14,0x00,0x00,0x00,0,0,0,0])
 # MiguelDLM 68-byte template; offset8=devmagic, offset20-27=token, offset40/44/48=pan/tilt/zoom

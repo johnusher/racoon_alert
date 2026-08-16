@@ -10,7 +10,7 @@
 #
 # The app is a self-contained local web app (go2rtc -> WebRTC) at http://127.0.0.1:1984/
 
-DIR="***REMOVED-PATH***/Documents/h32"
+DIR="${0:A:h}"
 PORT=1984
 URL="http://127.0.0.1:${PORT}/"
 BIN="$DIR/go2rtc"
@@ -18,10 +18,19 @@ CFG="$DIR/go2rtc.yaml"
 LOG="$DIR/go2rtc.log"
 VENV="$DIR/.venv"
 
+# Site-local settings — camera address/password, alert address (gitignored).
+# Exported so go2rtc can expand the ${H32_*} placeholders in go2rtc.yaml.
+export H32_DIR="$DIR"
+[[ -f "$DIR/local.env" ]] && { set -a; source "$DIR/local.env"; set +a }
+
 up() { nc -z 127.0.0.1 $PORT 2>/dev/null; }
 
 ensure_up() {
   up && return 0
+  if [[ -z "$H32_CAMERA_IP" ]]; then
+    echo "h32: no camera configured — cp local.env.example local.env and fill it in" >&2
+    return 1
+  fi
   echo "h32: starting go2rtc…"
   nohup "$BIN" -config "$CFG" >"$LOG" 2>&1 &
   for i in {1..40}; do up && break; sleep 0.25; done

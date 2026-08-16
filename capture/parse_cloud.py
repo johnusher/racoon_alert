@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Analyze the camera<->cloud capture: plaintext PTZ vs TLS."""
-import struct, collections
+import os, sys, struct, collections
 from scapy.all import rdpcap, IP, TCP, Raw
 
-PCAP="***REMOVED-PATH***/Documents/h32/capture/cloud_capture.pcap"
-CAM="***REMOVED-IP***"; LAN="192.168.1."; MAGIC=b"\xcc\xdd\xee\xff"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import h32env                                   # camera/LAN settings from local.env
+
+PCAP=os.path.join(HERE, "cloud_capture.pcap")
+CAM=h32env.CAMERA_IP; LAN=CAM.rsplit(".",1)[0]+"."; MAGIC=b"\xcc\xdd\xee\xff"
 pkts=rdpcap(PCAP)
 
 ext_ips=collections.Counter(); frames=[]; tls=collections.Counter(); other=[]

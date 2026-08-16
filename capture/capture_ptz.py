@@ -6,9 +6,10 @@ Routes traffic between the PHONE and the CAMERA through this Mac, sniffs the
 proprietary control ports (23456 / 34567), and live-decodes any PTZ packets so we
 can read THIS camera's real command bytes (incl. the device/session header token).
 
-Run as root, from the project venv:
-    sudo ***REMOVED-PATH***/Documents/h32/.venv/bin/python \
-         ***REMOVED-PATH***/Documents/h32/capture/capture_ptz.py <PHONE_IP>
+Point it at YOUR OWN camera on YOUR OWN network — see the note in capture/README.md.
+
+Run as root, from the project venv (from the repo root):
+    sudo ./.venv/bin/python capture/capture_ptz.py <PHONE_IP>
 
 Then, in the IPC360 app, pan the camera: RIGHT, LEFT, UP, DOWN, ZOOM+ , ZOOM- ,
 pausing ~1s between each. Watch this terminal — decoded PTZ lines appear live.
@@ -22,14 +23,19 @@ if os.geteuid() != 0:
 
 from scapy.all import (Ether, ARP, srp, sendp, sniff, wrpcap, conf, get_if_hwaddr)
 
-CAMERA_IP = "***REMOVED-IP***"
-PORTS = {23456, 34567}
-IFACE = "en0"
-PCAP = "***REMOVED-PATH***/Documents/h32/capture/ptz_capture.pcap"
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import h32env                                   # camera/LAN settings from local.env
 
-if len(sys.argv) < 2:
-    sys.exit("usage: capture_ptz.py <PHONE_IP>  (the phone running IPC360)")
-PHONE_IP = sys.argv[1]
+CAMERA_IP = h32env.CAMERA_IP
+PORTS = {23456, 34567}
+IFACE = h32env.IFACE
+PCAP = os.path.join(HERE, "ptz_capture.pcap")
+
+PHONE_IP = sys.argv[1] if len(sys.argv) > 1 else h32env.PHONE_IP
+if not PHONE_IP:
+    sys.exit("usage: capture_ptz.py <PHONE_IP>  (the phone running IPC360; "
+             "or set H32_PHONE_IP in local.env)")
 conf.iface = IFACE
 conf.verb = 0
 MY_MAC = get_if_hwaddr(IFACE)
