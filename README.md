@@ -152,8 +152,8 @@ go2rtc.log       runtime log
 web/index.html   viewer UI
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
 detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
-detector/samples/  a few real night frames + the raccoon clip used above (video only —
-                 the live camera mic track is stripped from anything published here)
+detector/samples/  a few real night frames + the raccoon clip used above (with the
+                 camera's mic audio, as recorded)
 capture/         PTZ/cloud reverse-engineering + capture tooling
 ```
 
