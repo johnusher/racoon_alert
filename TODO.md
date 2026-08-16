@@ -112,8 +112,31 @@ Probed 2026-08-16 and ruled out; do not re-litigate without new firmware:
 - `Public:` lists no `ANNOUNCE` and no `RECORD` — the two methods needed to push a stream
   *to* a device. `Server: H264DVR 1.0`.
 
-Consistent with the earlier finding that PTZ and talk are cloud-brokered. The only route
-left is the transparent MITM in `capture/`, which is parked on purpose.
+Consistent with the earlier finding that PTZ and talk are cloud-brokered.
 
-**The new VIMTAGs advertise 2-way audio** — worth re-testing there, since a camera with a
-working ONVIF backchannel would give this for free.
+**Requested feature, blocked on the above:** buttons on `h32 detect` (and the plain viewer)
+to talk from the MacBook to the camera — either live mic, or one-click playback of a
+canned `.wav` (a TTS "hello", a deterrent noise). The `.wav` variant is the easier of the
+two, but both need the same thing the PC530 refuses: an inbound audio channel. Build them
+the moment a camera actually accepts one — not before, since a button that cannot work is
+worse than none.
+`web/index.html` already has the pattern: the 🎛 drawer carries disabled PTZ/talk buttons
+with a PENDING tag. go2rtc supports two-way audio natively for backchannel-capable
+cameras (`media=video,audio,microphone` in the player), so on such a camera this is a
+small job — a button that adds `microphone` to the stream's media and a `.wav`/TTS path
+via `ffmpeg` into the same backchannel.
+
+**Two untested leads, in order of promise:**
+
+1. **The new VIMTAGs advertise 2-way audio.** If they expose an ONVIF backchannel this
+   comes almost free. Test with the same `DESCRIBE` probe as above — a `sendonly` audio
+   media in the SDP is the yes/no.
+2. **Port 34567 on the PC530 has never been probed for audio.** Its RTSP server
+   identifies as `Server: H264DVR 1.0` and 34567 is the classic XiongMai/Sofia "DVRIP"
+   port — a documented protocol with open-source clients (e.g. `python-dvr`) that
+   implement talk on some XiongMai devices. Our PTZ work only ever targeted 23456. This
+   is a real lead but a much bigger job than the backchannel probe, and it may well hit
+   the same cloud-brokered wall. Worth a timeboxed spike only if talk on *this* camera
+   matters more than talk on the new ones.
+
+The transparent MITM in `capture/` remains parked on purpose.
