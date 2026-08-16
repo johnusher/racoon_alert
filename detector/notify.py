@@ -19,15 +19,19 @@ class EmailNotifier:
                 print(f"[notify] secrets error: {e}")
         self.triggers = set(self.cfg.get("trigger_on", ["RACCOON", "ANIMAL", "PERSON"]))
 
-    def maybe_alert(self, tag, detail, image_path):
+    def maybe_alert(self, tag, detail, image_path, who=None):
         import time
         if not self.enabled or tag not in self.triggers:
             return
         if time.time() - self._last < self.min_gap:      # rate-limit emails
             return
         self._last = time.time()
-        subject = f"[h32] {tag} detected"
-        body = f"{tag} detected at {time.strftime('%Y-%m-%d %H:%M:%S')}.\nDetections: {detail}\nA clip is being recorded on the Mac (detector/events/)."
+        # Name the thing recognised: a known person, else the species/kind.
+        what = who if (who and tag == "PERSON") else tag.title()
+        subject = f"[h32] {what} at the camera"
+        body = (f"{what} recognised at {time.strftime('%Y-%m-%d %H:%M:%S')}.\n"
+                f"Detections: {detail}\n"
+                f"A clip is being recorded on the Mac (detector/events/).")
         threading.Thread(target=self._send, args=(subject, body, image_path), daemon=True).start()
 
     def _send(self, subject, body, image_path):

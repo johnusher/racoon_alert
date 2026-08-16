@@ -66,9 +66,9 @@
   "monitor_port": 8090,
   "open_browser": true,
   "email": {
-    "enabled": false,
+    "enabled": true,
     "to": null,
-    "trigger_on": ["RACCOON", "ANIMAL", "PERSON"],
+    "trigger_on": ["RACCOON", "CAT", "ANIMAL", "PERSON"],
     "min_gap_secs": 120
   },
   "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example).",

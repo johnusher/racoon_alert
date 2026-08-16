@@ -264,7 +264,7 @@ def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     log(f"{tag}  {detail}  {where}  snapshot={snap}"
         + (f"  faces[{who_detail}]" if who_detail else ""))
     monitor.add_event(tag, snap, detail, who=who)
-    notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap))
+    notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap), who=who)
     def _save():
         clip = rec.save_event(name)
         if clip: monitor.set_clip(snap, os.path.basename(clip))
