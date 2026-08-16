@@ -30,9 +30,13 @@ import h32env
 PORT = 23456
 TYPE_KEEPALIVE = 0x01
 TYPE_AUDIO = 0x9c57
+TYPE_TALK_CTRL = 0x4f35          # open/close the speaker (the app sends this to the cloud;
+                                 # the camera also honours it sent straight to :23456)
 CODEC_TAG = 0x29                 # G.711 A-law, from the captured frames
 FRAME_SAMPLES = 320              # 40 ms of 8 kHz audio per message
 FRAME_SECS = FRAME_SAMPLES / 8000.0
+REOPEN_EVERY = 25                # re-send the speaker-open ~1s, so anything that closes it
+                                 # (the app's mic release, a camera timeout) recovers fast
 
 
 # ---- G.711 A-law codec (Python 3.13+ dropped the `audioop` module) ----------
@@ -123,12 +127,50 @@ def tone_pcm(secs=1.0, hz=880):
     return (np.sin(2 * np.pi * hz * t) * 8000).astype(np.int16)
 
 
+# SomaFM channels (free internet radio, 128k mp3) — a continuous stream is the easiest
+# possible test of "does the camera speaker play anything at all?".
+SOMA = {
+    "groovesalad": "https://ice1.somafm.com/groovesalad-128-mp3",
+    "dronezone":   "https://ice1.somafm.com/dronezone-128-mp3",
+    "indiepop":    "https://ice1.somafm.com/indiepop-128-mp3",
+    "u80s":        "https://ice1.somafm.com/u80s-128-mp3",
+    "lush":        "https://ice1.somafm.com/lush-128-mp3",
+    "beatblender": "https://ice1.somafm.com/beatblender-128-mp3",
+    "spacestation":"https://ice1.somafm.com/spacestation-128-mp3",
+}
+
+
+def stream_url(url, secs=None):
+    """Decode any audio URL (SomaFM, etc.) with ffmpeg and stream it to the camera
+    speaker until Ctrl-C or `secs` elapses. ffmpeg does the mp3/aac decode + resample."""
+    import shutil
+    if not shutil.which("ffmpeg"):
+        raise SystemExit("ffmpeg not found (needed to decode the stream).")
+    cmd = ["ffmpeg", "-loglevel", "error", "-reconnect", "1", "-reconnect_streamed", "1",
+           "-i", url, "-f", "s16le", "-ar", "8000", "-ac", "1", "-"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    deadline = (time.monotonic() + secs) if secs else None
+    stop = (lambda: deadline is not None and time.monotonic() >= deadline)
+    try:
+        with CameraTalk() as talk:
+            print(f"→ camera {talk.ip}:{talk.port}  · streaming {url}")
+            print("  (go and listen — Ctrl-C to stop)" if not secs else f"  for {secs:.0f}s…")
+            talk.stream_pcm_stdout(proc.stdout, should_stop=stop)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    print("\nstream stopped.")
+
+
 # ---- the camera talk client -------------------------------------------------
 
 class CameraTalk:
     """Streams 8 kHz mono PCM to the camera speaker as cc-dd-ee-ff A-law frames."""
 
-    def __init__(self, ip=None, devid=None, const=None, port=PORT):
+    def __init__(self, ip=None, devid=None, const=None, port=PORT, session=None):
         self.ip = ip or h32env.CAMERA_IP
         self.port = port
         devid = devid or h32env.CAMERA_DEVID
@@ -139,6 +181,7 @@ class CameraTalk:
                 "  Capture it once: sudo ./.venv/bin/python capture/capture_talk.py")
         self.devid = bytes.fromhex(devid)
         self.const = bytes.fromhex(const)
+        self.session = bytes.fromhex(session) if session else b"\x00\x00\x00\x00"
         self.seq = 0
         self.sock = None
 
@@ -148,6 +191,15 @@ class CameraTalk:
 
     def _keepalive(self):
         return self._frame(TYPE_KEEPALIVE, b"\x00\x00\x00\x00")
+
+    def _talk_ctrl(self, start):
+        """Open (start=True) / close the camera speaker. Inner:
+        [zero][device id][session][01][flag][zero][zero]. The session is a cloud handle
+        the camera does not seem to validate on a local connection, so zero works."""
+        flag = b"\x01\x00\x00\x00" if start else b"\x00\x00\x00\x00"
+        inner = (b"\x00\x00\x00\x00" + self.devid + self.session
+                 + b"\x01\x00\x00\x00" + flag + b"\x00" * 8)
+        return self._frame(TYPE_TALK_CTRL, inner)
 
     def _audio_frame(self, alaw320):
         inner = (b"\x00\x00\x00\x00" + struct.pack("<I", CODEC_TAG) + self.devid
@@ -159,17 +211,43 @@ class CameraTalk:
         self.sock = socket.create_connection((self.ip, self.port), timeout=5)
         self.sock.sendall(self._keepalive())
         self.sock.sendall(self._keepalive())
+        self.sock.sendall(self._talk_ctrl(True))     # open the speaker
+        time.sleep(0.2)
         return self
 
     def __exit__(self, *a):
         if self.sock:
             try:
+                self.sock.sendall(self._talk_ctrl(False))   # close the speaker
+            except OSError:
+                pass
+            try:
                 self.sock.close()
             finally:
                 self.sock = None
 
+    def _send_frames(self, frames, realtime=True, on_progress=None, total=None):
+        """Core sender: `frames` is any iterable of exactly-320-sample int16 chunks.
+        Paces at 40 ms/frame so the camera plays it live, with periodic keepalives."""
+        start = time.monotonic()
+        i = 0
+        for chunk in frames:
+            self.sock.sendall(self._audio_frame(pcm_to_alaw(chunk)))
+            if i % 12 == 0:
+                self.sock.sendall(self._keepalive())
+            if i and i % REOPEN_EVERY == 0:
+                self.sock.sendall(self._talk_ctrl(True))   # keep the speaker open
+            if on_progress and total and i % 25 == 0:
+                on_progress(i / total)
+            if realtime:
+                slack = start + (i + 1) * FRAME_SECS - time.monotonic()
+                if slack > 0:
+                    time.sleep(slack)
+            i += 1
+        return i * FRAME_SECS
+
     def play(self, pcm8k, realtime=True, on_progress=None, lead_silence=0.4):
-        """Send 8 kHz mono int16 PCM. Paced at 40 ms/frame so the camera plays it live.
+        """Send finite 8 kHz mono int16 PCM.
 
         lead_silence: seconds of silence sent first, to let the camera switch its
         half-duplex speaker on before the actual audio — without it, a short greeting
@@ -181,20 +259,24 @@ class CameraTalk:
         if pad:
             pcm = np.concatenate([pcm, np.zeros(pad, np.int16)])
         n = len(pcm) // FRAME_SAMPLES
-        start = time.monotonic()
-        for i in range(n):
-            chunk = pcm[i * FRAME_SAMPLES:(i + 1) * FRAME_SAMPLES]
-            self.sock.sendall(self._audio_frame(pcm_to_alaw(chunk)))
-            if i % 12 == 0:
-                self.sock.sendall(self._keepalive())
-            if on_progress and i % 25 == 0:
-                on_progress(i / n)
-            if realtime:
-                target = start + (i + 1) * FRAME_SECS
-                slack = target - time.monotonic()
-                if slack > 0:
-                    time.sleep(slack)
-        return n * FRAME_SECS
+        frames = (pcm[k * FRAME_SAMPLES:(k + 1) * FRAME_SAMPLES] for k in range(n))
+        return self._send_frames(frames, realtime, on_progress, n)
+
+    def stream_pcm_stdout(self, stdout, realtime=True, should_stop=None):
+        """Stream unbounded 8 kHz mono s16le PCM from a file object (e.g. ffmpeg stdout)
+        to the camera speaker until EOF, error, or should_stop() returns True."""
+        def frames():
+            buf = b""
+            need = FRAME_SAMPLES * 2
+            while not (should_stop and should_stop()):
+                data = stdout.read(4096)
+                if not data:
+                    break
+                buf += data
+                while len(buf) >= need:
+                    yield np.frombuffer(buf[:need], np.int16)
+                    buf = buf[need:]
+        return self._send_frames(frames(), realtime)
 
 
 def main():
@@ -204,11 +286,19 @@ def main():
     ap.add_argument("--voice", metavar="NAME", help="`say` voice, e.g. Anna (German female)")
     ap.add_argument("--tone", action="store_true", help="send a 1s test beep")
     ap.add_argument("--mic", action="store_true", help="stream the Mac microphone live")
-    ap.add_argument("--secs", type=float, default=10.0, help="--mic duration (default 10)")
+    ap.add_argument("--stream", metavar="URL", help="stream an audio URL (mp3/aac) live")
+    ap.add_argument("--soma", metavar="CH", nargs="?", const="groovesalad",
+                    help=f"stream a SomaFM channel ({', '.join(SOMA)})")
+    ap.add_argument("--secs", type=float, default=None, help="duration limit (seconds)")
     args = ap.parse_args()
 
+    if args.soma:
+        url = SOMA.get(args.soma) or SOMA["groovesalad"]
+        return stream_url(url, args.secs)
+    if args.stream:
+        return stream_url(args.stream, args.secs)
     if args.mic:
-        return stream_mic(args.secs)
+        return stream_mic(args.secs or 10.0)
     if args.say:
         pcm = say_to_pcm(args.say, args.voice)
     elif args.tone:

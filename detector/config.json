@@ -44,8 +44,8 @@
     "greet_text": "Hallo.",
     "greet_voice": "Anna",
     "greet_on": "person",
-    "greet_once": true,
-    "greet_cooldown_secs": 30
+    "greet_once": false,
+    "greet_cooldown_secs": 120
   },
   "buffer_secs": 120,
   "preroll": 20,

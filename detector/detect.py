@@ -313,7 +313,9 @@ print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
 print(f"    talk: {'on' if talk_on else 'off'}"
       + (f" — says {tc.get('greet_text','Hallo.')!r} ({tc.get('greet_voice','default')}) "
-         f"on first {greet_on}" if talk_on else " (set H32_CAMERA_DEVID in local.env)"))
+         f"on {'the first' if greet_once else 'each'} {greet_on}"
+         f"{'' if greet_once else f', ≤1/{greet_cooldown}s'}"
+         if talk_on else " (set H32_CAMERA_DEVID in local.env)"))
 print(f"👁  LIVE MONITOR: {url}   (live video + boxes; records + alerts on detection)")
 if cfg.get("open_browser", True) and not TEST and not os.environ.get("H32_NO_BROWSER"):
     try: webbrowser.open(url)
