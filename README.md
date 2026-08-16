@@ -173,6 +173,21 @@ h32 detect test-event                         # fire one event to verify snapsho
   stop firing events — leave it off until you have measured false accepts, see `TODO.md`.
   ⚠️ Enrolled faces are personal data: `detector/faces_store.npz` is gitignored and must
   stay that way — this repo is public.
+- **What animal (`species.py`):** MegaDetector only says `animal`; this splits it into
+  **cat / raccoon / …** so events tag the species. CLIP *zero-shot* is useless on this
+  camera's night IR (flat softmax), but CLIP image *embeddings* separate the species
+  (raccoon vs cat scored 100% leave-one-out on the first clips), so it's nearest-reference
+  on those embeddings, trained on labelled crops. Bootstrap/grow it:
+  `detector/species.py train raccoon <clip>…` / `train cat <clip>…`. An animal that
+  matches nothing well, or sits between two species, stays generic `ANIMAL`. Refs live in
+  gitignored `detector/species_refs.npz`; needs `open_clip_torch`. Honest limit while data
+  is thin: night-raccoon + day-cat means it partly keys on lighting until more is labelled.
+- **Learning who/what (`gallery.py`):** the detector quietly harvests a face crop of every
+  person and a crop of every animal into a gitignored, size-bounded, de-duplicated gallery
+  — the raw material for learning the household people (esp. the kids, who don't enrol well
+  one-shot) and for growing the species classifier. ⚠️ Children's biometrics: `detector/gallery/`
+  is gitignored and local-only. *(Next: a cluster-and-label tool that turns harvested faces
+  into named enrolments — see `TODO.md`.)*
 - **Recording:** `recorder.py` keeps a rolling ~120s circular buffer of 2s segments (video
   copy + AAC audio) from go2rtc's RTSP restream; on an event it assembles
   `[trigger-preroll … trigger+postroll]` into `detector/events/<ts>_<tag>.mp4`.

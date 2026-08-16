@@ -39,6 +39,29 @@ Then, only if a local stream exists:
 - **`detector/events/`** is a flat directory; filenames would need a camera prefix, and
   `scenery.json` must be per-camera (learned furniture is specific to where a camera points).
 
+## 0. Cat/human/raccoon + learning the 4 household people (in progress 2026-08-16)
+
+John: *"cat, human and raccoon detector. also … record the different humans so we can
+learn them"* — 4 people (male + female adult, 6yo, 2yo boy). Design = a shared **harvester**
+feeding two learners.
+
+- ✅ **Harvester** (`gallery.py`): detector saves face + animal crops (gitignored, deduped,
+  bounded) with SFace embeddings on faces. Running now.
+- ✅ **Species** (`species.py`): cat/raccoon via nearest-reference on CLIP image embeddings
+  (zero-shot was useless on night IR). Bootstrapped raccoon(7)+cat(5) from the real clips;
+  events tag the species. Grow with `species.py train <label> <clip>`.
+- ⏭ **Cluster-and-label tool (NOT built yet):** once face crops accumulate in the gallery,
+  a tool that clusters the SFace embeddings (sklearn agglomerative/DBSCAN on cosine),
+  shows a contact sheet per cluster, and lets John name them → enrols Dad/Mum/6yo/2yo into
+  `faces_store.npz`. This is how the kids get learned (one-shot enrol of a 2yo won't stick).
+  ⚠️ **The 2yo from a high night-IR fisheye is at/past the edge of face recognition** — may
+  only ever resolve to "a small child". **Person-box height** is a free coarse size prior
+  (adult vs 6yo vs 2yo) for when no face is visible — worth adding to the harvest metadata.
+- ⏭ **Better species over time:** the harvester collects animal crops; label them (cat vs
+  raccoon vs fox) and `species.py train` to move past the night/day-lighting confound.
+  Individual-cat ID (our black cat vs neighbours') is a later stretch.
+- ⚠️ Everything harvested is real people's biometrics incl. children → gitignored, local only.
+
 ## 2. Identifying particular people — BUILT, one measurement still missing
 
 Shipped 2026-08-16: `faces.py` + `enroll.py` + `test_faces.py`, wired into `detect.py`.
