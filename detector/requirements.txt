@@ -12,3 +12,4 @@ torch
 torchvision
 # for the PTZ capture tooling (capture/):
 scapy
+open_clip_torch   # species classifier (species.py) — CLIP image embeddings

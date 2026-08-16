@@ -26,6 +26,7 @@ from notify import EmailNotifier
 from scenery import SceneryFilter
 from faces import FaceIdentifier
 from gallery import Gallery
+from species import SpeciesClassifier
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
@@ -49,7 +50,8 @@ roi = np.array(cfg["roi"], np.int32) if cfg.get("roi") else None
 exclude = np.array(cfg["exclude_roi"], np.int32) if cfg.get("exclude_roi") else None
 events_dir = os.path.join(BASE, "events"); os.makedirs(events_dir, exist_ok=True)
 logf = open(os.path.join(events_dir, "events.log"), "a")
-COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120)}
+COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120),
+          "cat": (80, 200, 255), "raccoon": (80, 80, 255)}   # species share the animal box
 GREY = (110, 116, 124)                                    # suppressed-as-scenery boxes
 
 sc = cfg.get("scenery", {})
@@ -77,6 +79,13 @@ faces = FaceIdentifier(os.path.join(BASE, "models"), os.path.join(BASE, "faces_s
                        vote_window_secs=fc.get("vote_window_secs", 45),
                        min_votes=fc.get("min_votes", 2))
 known_suppresses = fc.get("known_suppresses_event", False)
+
+# ---- species: split MegaDetector's "animal" into cat / raccoon / … ----
+spc = cfg.get("species", {})
+species_on = spc.get("enabled", True)
+species = SpeciesClassifier(os.path.join(BASE, "species_refs.npz"),
+                            min_sim=spc.get("min_sim", 0.55), margin=spc.get("margin", 0.04))
+species_on = species_on and species.available and bool(species.matcher.refs)
 
 # ---- crop harvester: collect faces + animal crops to learn from later ----
 gc = cfg.get("gallery", {})
@@ -165,10 +174,6 @@ def in_roi(box):
     if exclude is not None and cv2.pointPolygonTest(exclude, pt, False) >= 0: return False
     return True
 
-def classify_raccoon(crop):
-    """Hook for a raccoon-specific classifier (Roboflow/CLIP). None = not implemented yet."""
-    return None
-
 def detect(img):
     r = model(img, imgsz=imgsz, conf=min_conf, device=DEVICE, verbose=False)[0]
     dets = []
@@ -237,11 +242,15 @@ def log(msg):
 
 def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     labels = {c for c, _, _ in dets}
-    racc = None
+    species_label = None                                  # cat / raccoon / … or None=unknown
     for c, cf, box in sorted((d for d in dets if d[0] == "animal"),
                              key=lambda d: -(d[2][2]-d[2][0])*(d[2][3]-d[2][1])):
-        racc = classify_raccoon(img[box[1]:box[3], box[0]:box[2]]); break
-    tag = forced_tag or ("RACCOON" if racc else ("ANIMAL" if "animal" in labels else "PERSON"))
+        crop = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
+        if species_on and crop.size:
+            species_label, _sim = species.classify(crop)
+        break
+    tag = forced_tag or (species_label.upper() if species_label
+                         else ("ANIMAL" if "animal" in labels else "PERSON"))
     detail = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
     if "person" in labels and faces_on:
         detail += f"  who={who or 'unknown'}"
@@ -323,6 +332,7 @@ print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
+print(f"    species: {'on' if species_on else 'off'} — {species.describe()}")
 print(f"    gallery: {'on' if gallery_on else 'off'} — harvesting crops to learn from"
       f" ({gallery.describe()})" if gallery_on else "    gallery: off")
 print(f"    talk: {'on' if talk_on else 'off'}"

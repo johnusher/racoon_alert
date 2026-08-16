@@ -43,3 +43,6 @@ local.env
 
 # harvested crops to learn from — real people (incl. children) biometrics; local only
 detector/gallery/
+
+# trained species reference embeddings (training data, grows)
+detector/species_refs.npz
