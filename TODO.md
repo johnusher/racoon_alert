@@ -50,6 +50,7 @@ feeding two learners.
 - ✅ **Species** (`species.py`): cat/raccoon via nearest-reference on CLIP image embeddings
   (zero-shot was useless on night IR). Bootstrapped raccoon(7)+cat(5) from the real clips;
   events tag the species. Grow with `species.py train <label> <clip>`.
+- ⚠️ **Night IR washes faces to pure white up close** (seen 2026-08-16 20:51 — John's face/shirt blown out by the IR illuminator). That destroys the detail SFace needs, so night-up-close recognition is unreliable; **daylight faces are the good case**. The cluster-and-label tool must **filter over-exposed crops** (e.g. skip a face crop whose mean luma is near-saturated) so blown-out night faces don't pollute the enrolments.
 - ⏭ **Cluster-and-label tool (NOT built yet):** once face crops accumulate in the gallery,
   a tool that clusters the SFace embeddings (sklearn agglomerative/DBSCAN on cosine),
   shows a contact sheet per cluster, and lets John name them → enrols Dad/Mum/6yo/2yo into
