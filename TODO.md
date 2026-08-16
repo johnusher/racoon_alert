@@ -131,23 +131,31 @@ via `ffmpeg` into the same backchannel.
 1. **The new VIMTAGs advertise 2-way audio.** If they expose an ONVIF backchannel this
    comes almost free. Test with the same `DESCRIBE` probe as above — a `sendonly` audio
    media in the SDP is the yes/no.
-2. **Port 34567 = DVRIP, confirmed live locally — but login is blocked (spiked 2026-08-16).**
-   34567 speaks XiongMai/Sofia DVRIP: an unauthenticated **KeepAlive answered `Ret:100`**
-   (msgid 1007, SessionID 0x00000000), so the protocol is genuinely running on the LAN,
-   not just cloud-brokered. **But the LOGIN (msgid 1000) is silently ignored** — every
-   variant tried (DVRIP-Web/Win/Mob/-, EncryptType MD5-sofia / plain / md5-hex, compact
-   and spaced JSON) got no reply, and without a session the useful commands (SystemInfo,
-   **OPTalkClaim**) can't be reached. So talk is *probably* reachable but is gated behind
-   a login this firmware answers differently than stock XiongMai — likely a Victure
-   wrapper, possibly cloud-tokened like the PTZ.
+2. **34567 DVRIP is a red herring; the app speaks `cc dd ee ff`. Capture harness built,
+   awaiting one talk session (spiked 2026-08-16).**
 
-   ⚠️ **This service is fragile — probe gently.** Rapid repeated connections made the
-   camera **reboot** (~65s; RTSP/ONVIF all dropped, ping stayed up, so it was the app
-   watchdog restarting, not the network). It came back on its own and go2rtc reconnected,
-   no lasting harm, but: **one connection at a time, ≥2s apart, and watch 554 between
-   probes.** Next step if pursued: capture a real IPC360-app talk session with the
-   `capture/` MITM tooling to see the exact login handshake this firmware expects —
-   the same method that cracked the PTZ structure. Bigger job; do it only if talk on
-   *this* camera matters more than on the new VIMTAGs.
+   Two probes this session. First, active DVRIP against 34567: an unauthenticated
+   **KeepAlive answered `Ret:100`** but the **LOGIN (msgid 1000) is silently ignored**
+   (every variant), so `OPTalkClaim` is unreachable. ⚠️ **Hammering 34567 rebooted the
+   camera** (~65s, ping stayed up = app-watchdog restart, recovered clean) — if ever
+   re-probed: one connection at a time, ≥2s apart, watch 554 between.
+
+   Then reading `ptz_capture.pcap` collapsed the DVRIP angle: **the app<->camera link is
+   the proprietary `cc dd ee ff` protocol** (device const `e4 12 69 00`), not DVRIP.
+   34567's DVRIP is a vestigial stub the app never uses. In a whole PTZ session the phone
+   sent the camera only **30 keepalive frames (type `0x01`)** — the pan went via cloud.
+
+   So the real experiment is a **talk capture**: `capture/capture_talk.py` (built; its
+   parser is validated against the PTZ pcap). It spoofs the phone against camera **and**
+   gateway and watches for a **new `cc dd ee ff` message type phone->camera** while talk
+   is held — a new high-volume type = LOCAL (buildable: a client sends the same frames to
+   `:23456`); a flood to a cloud IP = cloud-brokered (parked, same as PTZ).
+
+   ⚠️ **Needs John:** `sudo ./.venv/bin/python capture/capture_talk.py`, then in IPC360
+   press & hold talk saying "hello" ~5s, ×2–3, Ctrl-C. Capture is passive (route+sniff),
+   does NOT stress the camera like the active probing did. **Prior probability leans
+   cloud-brokered** (talk is the same protocol family as the cloud-brokered PTZ) — but
+   talk is a *stream*, not a one-shot command, so there is a real chance it is streamed
+   locally. The capture settles it either way.
 
 The transparent MITM in `capture/` remains parked on purpose.
