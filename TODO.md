@@ -131,12 +131,23 @@ via `ffmpeg` into the same backchannel.
 1. **The new VIMTAGs advertise 2-way audio.** If they expose an ONVIF backchannel this
    comes almost free. Test with the same `DESCRIBE` probe as above — a `sendonly` audio
    media in the SDP is the yes/no.
-2. **Port 34567 on the PC530 has never been probed for audio.** Its RTSP server
-   identifies as `Server: H264DVR 1.0` and 34567 is the classic XiongMai/Sofia "DVRIP"
-   port — a documented protocol with open-source clients (e.g. `python-dvr`) that
-   implement talk on some XiongMai devices. Our PTZ work only ever targeted 23456. This
-   is a real lead but a much bigger job than the backchannel probe, and it may well hit
-   the same cloud-brokered wall. Worth a timeboxed spike only if talk on *this* camera
-   matters more than talk on the new ones.
+2. **Port 34567 = DVRIP, confirmed live locally — but login is blocked (spiked 2026-08-16).**
+   34567 speaks XiongMai/Sofia DVRIP: an unauthenticated **KeepAlive answered `Ret:100`**
+   (msgid 1007, SessionID 0x00000000), so the protocol is genuinely running on the LAN,
+   not just cloud-brokered. **But the LOGIN (msgid 1000) is silently ignored** — every
+   variant tried (DVRIP-Web/Win/Mob/-, EncryptType MD5-sofia / plain / md5-hex, compact
+   and spaced JSON) got no reply, and without a session the useful commands (SystemInfo,
+   **OPTalkClaim**) can't be reached. So talk is *probably* reachable but is gated behind
+   a login this firmware answers differently than stock XiongMai — likely a Victure
+   wrapper, possibly cloud-tokened like the PTZ.
+
+   ⚠️ **This service is fragile — probe gently.** Rapid repeated connections made the
+   camera **reboot** (~65s; RTSP/ONVIF all dropped, ping stayed up, so it was the app
+   watchdog restarting, not the network). It came back on its own and go2rtc reconnected,
+   no lasting harm, but: **one connection at a time, ≥2s apart, and watch 554 between
+   probes.** Next step if pursued: capture a real IPC360-app talk session with the
+   `capture/` MITM tooling to see the exact login handshake this firmware expects —
+   the same method that cracked the PTZ structure. Bigger job; do it only if talk on
+   *this* camera matters more than on the new VIMTAGs.
 
 The transparent MITM in `capture/` remains parked on purpose.
