@@ -1,5 +1,12 @@
 # h32 — Victure PC530 local camera viewer
 
+I live in Berlin, and raccoons were raiding my pond — bothering the sticklebacks and the
+bitterling. I wanted to see how they were breaking in.
+
+![Raccoon caught at 03:53](detector/samples/20260816_035358_animal.jpg)
+
+*Caught in the act at 03:53. [Full 37s clip](detector/samples/20260816_035358_animal.mp4).*
+
 A self-contained **local** web app for viewing (and eventually controlling) a Victure
 PC530 Wi-Fi camera — no vendor cloud involved. Runs on this MacBook now; designed to
 also drive a Raspberry Pi + HDMI screen later.
@@ -145,6 +152,8 @@ go2rtc.log       runtime log
 web/index.html   viewer UI
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
 detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
+detector/samples/  a few real night frames + the raccoon clip used above (video only —
+                 the live camera mic track is stripped from anything published here)
 capture/         PTZ/cloud reverse-engineering + capture tooling
 ```
 
