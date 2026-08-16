@@ -15,6 +15,18 @@
   "min_hits": 2,
   "window": 5,
   "cooldown_secs": 30,
+  "signal_timeout_secs": 8,
+  "scenery": {
+    "enabled": true,
+    "min_move": 0.02,
+    "track_iou": 0.30,
+    "iou_match": 0.85,
+    "static_after_secs": 180,
+    "min_sightings": 5,
+    "forget_secs": 1800,
+    "conf_certain": 0.70,
+    "conf_override": 0.25
+  },
   "buffer_secs": 120,
   "preroll": 20,
   "postroll": 15,
@@ -27,5 +39,7 @@
     "trigger_on": ["RACCOON", "ANIMAL", "PERSON"],
     "min_gap_secs": 120
   },
-  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example)."
+  "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example).",
+  "_comment_scenery": "Static garden furniture reads as a low-confidence person to MegaDetector — that is what produced 56 bogus PERSON events on 2026-08-16. See scenery.py. min_move is how far a box must travel (as a fraction of its own size) before it counts as alive: raise it if furniture still gets through, lower it if slow animals are missed. static_after_secs is how long a never-moving spot must keep flickering before it is written off as scenery; conf_certain is the confidence at which a detection is believed regardless. Learned spots live in detector/scenery.json — delete that file to forget them.",
+  "_comment_signal": "signal_timeout_secs: no frame for this long and the monitor says NO CAMERA SIGNAL, detection pauses and no events fire (rather than sitting on the last frame with a ticking clock)."
 }

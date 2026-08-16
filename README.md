@@ -90,7 +90,7 @@ camera (RTSP) ──► go2rtc ──► WebRTC/MSE ──► browser (web/index
 
 - `go2rtc` — single Go binary; ingests the camera RTSP and serves low-latency WebRTC. Also serves the UI (`api.static_dir`).
 - `go2rtc.yaml` — stream + server config.
-- `web/` — the viewer: `index.html` (UI) + `video-rtc.js` / `video-stream.js` (official go2rtc player, vendored so it's served same-origin).
+- `web/` — the viewer: `index.html` (plain UI), `monitor.html` (the same UI plus detection boxes, used by `h32 detect`) + `video-rtc.js` / `video-stream.js` (official go2rtc player, vendored so it's served same-origin).
 - `h32` — launcher script (registered as an `alias` in `~/.zshrc`).
 
 ## Animal detector + recorder (`detector/`)
@@ -106,12 +106,36 @@ h32 detect                                    # run detector + recorder (Ctrl-C 
 h32 detect test-event                         # fire one event to verify snapshot+clip
 ```
 
-- **Live monitor:** `h32 detect` opens a browser screen at `http://127.0.0.1:8090/` (and prints the link) — live video with **bounding boxes**, a clock/REC indicator, and a recent-events sidebar (snapshot thumbnails + clip links). Plain `h32` is the AI-free viewer; `h32 detect` is the AI monitor.
+- **Live monitor:** `h32 detect` opens `http://127.0.0.1:1984/monitor.html` (and prints the link) —
+  the same live WebRTC video and controls as the plain viewer (volume, digital zoom/pan,
+  1080p/360p, snapshot, fullscreen, same keyboard shortcuts), with **detection boxes drawn
+  over it**, a REC indicator and a recent-events sidebar (snapshot thumbnails + clip links).
+  `b` toggles the boxes; a snapshot saves the picture with the boxes on it. The page is served
+  by go2rtc so it is same-origin with the stream; it pulls boxes and events from the detector
+  on `:8090` (`/state.json`, plus `/stream.mjpg` as an annotated fallback). Plain `h32` is the
+  AI-free viewer; `h32 detect` is the AI monitor.
+- **No camera signal:** if the feed stops, the monitor says so — a **NO CAMERA SIGNAL** overlay
+  with the reason and when the last frame arrived — instead of showing the last frame with a
+  ticking clock over it. Detection pauses and no events fire until video returns (`signal_timeout_secs`).
 - **Email alerts (optional, off by default):** `cp detector/secrets.json.example detector/secrets.json`, fill SMTP (Gmail/Workspace → 16-char App Password), set `H32_EMAIL_TO` in `local.env` and `email.enabled=true` in `config.json`; test with `../.venv/bin/python detector/notify.py`. Snapshot is attached; rate-limited by `min_gap_secs`.
 - **Detection:** MegaDetector v6 (classes: animal / person / vehicle) loaded straight through
   ultralytics on Apple-Silicon MPS. `vehicle` is ignored (the Weber BBQ trips it). CLAHE
   contrast boost helps the dark IR image. Temporal confirmation (`min_hits`/`window`) + a
   cooldown suppress false positives.
+- **Scenery filter (`scenery.py`):** MegaDetector calls static garden furniture a person at
+  0.30–0.51 — a stone bench alone produced **56 bogus PERSON events in one day**. Confidence
+  cannot separate them: the real person who walked past at 00:32 scored 0.39 in his own
+  trigger frame, *below* the bench. Movement can. Measured over the recorded clips, the box
+  centre travels (as a fraction of its own size) 0.000–0.009 for the bench versus 0.030–1.4
+  for the person and 0.062 for the raccoon. So a detection is only allowed to *fire* once its
+  track has moved — it is still shown and still counts toward `min_hits`, which matters
+  because the raccoon appeared in only two frames of a 37-second clip. On top of that, a spot
+  that keeps flickering without anything ever moving there is written off as scenery and
+  dropped outright (drawn dashed-grey on the monitor, remembered in `detector/scenery.json`,
+  forgotten again after `forget_secs`, and never applied where something has genuinely moved).
+  A confident detection (`conf_certain`, default 0.70) skips both gates. Tune under `scenery`
+  in `config.json`; `detector/test_scenery.py` replays the real recorded box sequences and
+  checks the bench fires nothing while the raccoon and the person still do.
 - **Recording:** `recorder.py` keeps a rolling ~120s circular buffer of 2s segments (video
   copy + AAC audio) from go2rtc's RTSP restream; on an event it assembles
   `[trigger-preroll … trigger+postroll]` into `detector/events/<ts>_<tag>.mp4`.
@@ -150,8 +174,10 @@ go2rtc           media-server binary (darwin arm64, v1.9.14)
 go2rtc.yaml      config (camera streams + server; ${H32_*} filled from local.env)
 go2rtc.log       runtime log
 web/index.html   viewer UI
+web/monitor.html the AI monitor UI — same controls, detection boxes drawn over the video
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
 detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
+detector/scenery.py  tells living things from garden furniture (test_scenery.py covers it)
 detector/samples/  a few real night frames + the raccoon clip used above (with the
                  camera's mic audio, as recorded)
 capture/         PTZ/cloud reverse-engineering + capture tooling

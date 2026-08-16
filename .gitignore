@@ -21,6 +21,8 @@ detector/events/events.log
 detector/*.pt
 detector/models/*.pt
 detector/samples/_*.jpg
+# scenery the detector has learned to ignore — specific to where this camera points
+detector/scenery.json
 
 .DS_Store
 
