@@ -136,6 +136,20 @@ h32 detect test-event                         # fire one event to verify snapsho
   A confident detection (`conf_certain`, default 0.70) skips both gates. Tune under `scenery`
   in `config.json`; `detector/test_scenery.py` replays the real recorded box sequences and
   checks the bench fires nothing while the raccoon and the person still do.
+- **…and the rock:** the bench is easy because its box is *pixel-identical* frame to frame.
+  A big irregular boulder is not: MegaDetector does not quite agree with itself about where
+  its edges are, so the box breathes by up to 28px while the rock does not move at all. That
+  wobble measures **0.064 of the object's own size — more than the raccoon really moved
+  (0.062)**, so no single `min_move` can separate them, and it was self-perpetuating: reading
+  as movement, it both cleared the gate and reset the "nothing has moved here" clock, so the
+  spot could never be written off; and it pushed the box past `iou_match`, so one boulder
+  sprawled into 30 anchors, each born fresh and trusting. So the movement gate is no longer a
+  constant — **each spot learns the wobble it shows while nothing is happening there, and
+  movement at that spot must beat its own wobble** (`jitter_slack`, after `jitter_learn_secs`).
+  A spot we have only just noticed keeps the permissive `min_move`, which is exactly what
+  still lets the raccoon through on first sight. A detector that has been watching the garden
+  fires nothing at the rock; a cold one with no memory of the spot may fire once, and has
+  learned it by the next time.
 - **Who is it (`faces.py`, optional):** identifies enrolled people on top of the person
   detection. Uses OpenCV's own YuNet + SFace, so there are **no extra dependencies** —
   just `./detector/get-face-models.sh` (~38MB) and somebody enrolled:

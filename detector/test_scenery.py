@@ -4,15 +4,19 @@ Regression test for the scenery/movement filter, driven by REAL recorded sequenc
 
 Every box sequence below was measured by running MegaDetector over clips in
 detector/events/ at the detector's own rate (3 fps). The false positives are the
-garden bench that produced 56 bogus PERSON events on 2026-08-16; the true positives
-are the 03:53 raccoon and the person who walked through at 00:32.
+garden bench that produced 56 bogus PERSON events on 2026-08-16, and the rock that
+kept firing later the same day; the true positives are the 03:53 raccoon and the
+person who walked through at 00:32.
+
+The bench and the rock fail differently, which is the whole point of this file: the
+bench's box is pixel-identical frame to frame, the rock's is not.
 
 Run:  ../.venv/bin/python detector/test_scenery.py
 """
 import os, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scenery import SceneryFilter
+from scenery import SceneryFilter, _displacement
 
 # --- real data -------------------------------------------------------------
 
@@ -67,6 +71,112 @@ PERSON = [
     (12.92, "person", 0.64, [1314, 0, 1541, 468]),
     (13.26, "person", 0.84, [1287, 0, 1559, 491]),
     (13.60, "person", 0.85, [1261, 1, 1558, 583]),
+]
+
+# FALSE POSITIVE — the rock. A big irregular boulder: unlike the bench, MegaDetector
+# does not agree with itself about where its edges are, so the box wobbles by up to
+# 28px frame to frame. That wobble is what defeated the original movement gate — it is
+# LARGER than the raccoon's real movement (0.064 vs 0.062 of the object's own size),
+# which is why no single min_move threshold can separate them. These three clips are
+# the events the rock fired on 2026-08-16 at 16:14:57, 16:17:52 and 16:18:39.
+# FALSE POSITIVE — the rock, 20260816_161457_person.mp4 (30 detections)
+ROCK_1614 = [
+    (4.27, 'person', 0.4, [188, 517, 531, 775]),
+    (4.63, 'person', 0.38, [189, 516, 531, 775]),
+    (4.98, 'person', 0.39, [188, 517, 531, 775]),
+    (5.34, 'person', 0.38, [189, 516, 531, 775]),
+    (5.69, 'person', 0.38, [189, 516, 531, 774]),
+    (6.05, 'person', 0.38, [189, 516, 531, 774]),
+    (12.46, 'person', 0.42, [183, 496, 531, 775]),
+    (12.81, 'person', 0.34, [190, 504, 523, 777]),
+    (18.86, 'person', 0.35, [187, 498, 531, 775]),
+    (19.22, 'person', 0.36, [187, 498, 532, 776]),
+    (19.57, 'person', 0.36, [187, 498, 532, 776]),
+    (19.93, 'person', 0.36, [187, 498, 532, 776]),
+    (20.28, 'person', 0.36, [187, 498, 532, 776]),
+    (21.0, 'person', 0.37, [174, 506, 538, 775]),
+    (21.35, 'person', 0.34, [175, 505, 538, 775]),
+    (21.71, 'person', 0.36, [175, 504, 539, 775]),
+    (22.06, 'person', 0.36, [175, 505, 537, 775]),
+    (22.42, 'person', 0.35, [175, 505, 536, 774]),
+    (25.62, 'person', 0.31, [160, 491, 532, 776]),
+    (25.98, 'person', 0.3, [160, 491, 532, 775]),
+    (26.33, 'person', 0.32, [159, 491, 532, 775]),
+    (26.69, 'person', 0.39, [185, 514, 528, 774]),
+    (27.05, 'person', 0.42, [185, 513, 530, 774]),
+    (27.4, 'person', 0.41, [185, 515, 529, 774]),
+    (27.76, 'person', 0.41, [185, 520, 528, 774]),
+    (28.11, 'person', 0.45, [184, 520, 527, 774]),
+    (28.47, 'person', 0.34, [187, 499, 519, 779]),
+    (28.83, 'person', 0.3, [184, 496, 540, 777]),
+    (29.89, 'person', 0.31, [184, 495, 541, 777]),
+    (30.25, 'person', 0.31, [184, 496, 541, 777]),
+]
+# FALSE POSITIVE — the rock, 20260816_161752_person.mp4 (23 detections)
+ROCK_1617 = [
+    (6.75, 'person', 0.31, [186, 506, 532, 775]),
+    (7.11, 'person', 0.31, [186, 505, 532, 775]),
+    (7.46, 'person', 0.31, [185, 504, 532, 775]),
+    (14.21, 'person', 0.39, [187, 516, 540, 772]),
+    (14.57, 'person', 0.4, [187, 495, 539, 773]),
+    (14.92, 'person', 0.39, [187, 494, 539, 772]),
+    (15.28, 'person', 0.39, [187, 495, 539, 773]),
+    (15.63, 'person', 0.38, [188, 496, 539, 772]),
+    (15.99, 'person', 0.36, [187, 495, 540, 772]),
+    (19.19, 'person', 0.3, [193, 499, 534, 774]),
+    (19.54, 'person', 0.32, [193, 499, 534, 774]),
+    (19.9, 'person', 0.34, [193, 499, 533, 773]),
+    (22.38, 'person', 0.43, [184, 506, 531, 776]),
+    (22.74, 'person', 0.41, [177, 502, 533, 774]),
+    (23.09, 'person', 0.41, [179, 502, 533, 774]),
+    (23.45, 'person', 0.41, [180, 503, 533, 774]),
+    (23.8, 'person', 0.41, [179, 504, 533, 774]),
+    (24.16, 'person', 0.42, [182, 504, 532, 774]),
+    (28.78, 'person', 0.31, [184, 497, 534, 775]),
+    (29.13, 'person', 0.32, [184, 497, 533, 775]),
+    (29.49, 'person', 0.32, [184, 497, 533, 775]),
+    (29.84, 'person', 0.32, [184, 497, 533, 775]),
+    (30.2, 'person', 0.32, [184, 497, 533, 775]),
+]
+# FALSE POSITIVE — the rock, 20260816_161839_person.mp4 (37 detections)
+ROCK_1618 = [
+    (4.27, 'person', 0.4, [181, 498, 541, 775]),
+    (4.62, 'person', 0.41, [183, 507, 513, 777]),
+    (4.98, 'person', 0.41, [183, 511, 512, 777]),
+    (5.33, 'person', 0.41, [183, 510, 515, 778]),
+    (5.69, 'person', 0.37, [183, 512, 516, 777]),
+    (6.04, 'person', 0.37, [183, 513, 516, 777]),
+    (18.49, 'person', 0.45, [183, 499, 534, 774]),
+    (18.84, 'person', 0.46, [183, 498, 534, 774]),
+    (19.2, 'person', 0.47, [183, 497, 534, 774]),
+    (19.55, 'person', 0.47, [183, 498, 534, 774]),
+    (19.91, 'person', 0.47, [183, 498, 534, 774]),
+    (21.33, 'person', 0.33, [186, 511, 535, 771]),
+    (21.69, 'person', 0.32, [186, 510, 535, 771]),
+    (22.04, 'person', 0.32, [186, 508, 535, 771]),
+    (22.4, 'person', 0.5, [178, 507, 534, 775]),
+    (22.75, 'person', 0.46, [179, 506, 535, 775]),
+    (23.11, 'person', 0.46, [179, 508, 535, 775]),
+    (23.46, 'person', 0.47, [178, 508, 534, 775]),
+    (23.82, 'person', 0.47, [178, 508, 534, 775]),
+    (24.17, 'person', 0.48, [179, 509, 534, 775]),
+    (26.66, 'person', 0.41, [181, 518, 516, 778]),
+    (27.02, 'person', 0.43, [181, 517, 516, 777]),
+    (27.37, 'person', 0.45, [181, 517, 515, 777]),
+    (27.73, 'person', 0.41, [181, 517, 515, 777]),
+    (28.09, 'person', 0.39, [181, 515, 516, 777]),
+    (28.44, 'person', 0.46, [182, 509, 538, 776]),
+    (28.8, 'person', 0.42, [183, 510, 538, 776]),
+    (29.15, 'person', 0.43, [183, 510, 538, 776]),
+    (29.51, 'person', 0.43, [183, 507, 538, 776]),
+    (29.86, 'person', 0.43, [183, 507, 538, 776]),
+    (30.22, 'person', 0.43, [183, 507, 538, 776]),
+    (30.57, 'person', 0.35, [184, 507, 537, 776]),
+    (30.93, 'person', 0.47, [183, 500, 539, 776]),
+    (31.29, 'person', 0.45, [183, 502, 538, 776]),
+    (31.64, 'person', 0.44, [183, 503, 538, 776]),
+    (32.0, 'person', 0.45, [183, 503, 538, 776]),
+    (32.35, 'person', 0.43, [183, 506, 538, 776]),
 ]
 
 FAILS = []
@@ -186,6 +296,62 @@ check("a whole morning of bench flicker fires nothing", (lambda: (
 )(fresh()))() == 0)
 check("the raccoon still fires", events_fired(RACCOON, fresh()) >= 1)
 check("the person still fires", events_fired(PERSON, fresh()) >= 1)
+
+print("\n8. the rock: a static object whose BOX moves even though the object does not")
+ROCKS = {"16:14": ROCK_1614, "16:17": ROCK_1617, "16:18": ROCK_1618}
+
+# Why the bench's fix was not enough for the rock, in one line of arithmetic.
+rock_wobble = max(max(_displacement(b, seq[0][3]) for _, _, _, b in seq)
+                  for seq in ROCKS.values())
+raccoon_move = max(_displacement(b, RACCOON[0][3]) for _, _, _, b in RACCOON)
+check("the rock's box wobbles further than the raccoon really moves",
+      rock_wobble > raccoon_move,
+      f"rock {rock_wobble:.3f} > raccoon {raccoon_move:.3f} — so no fixed min_move "
+      f"can separate them")
+
+# The real case: a detector that has been watching this garden, which is what it is
+# doing every minute of every day. It must not fire at the rock at all.
+warm = fresh()
+check("a whole afternoon of rock flicker fires nothing", sum(
+    events_fired(seq, warm, t0=m * 60)
+    for m, seq in zip(range(0, 60, 5), list(ROCKS.values()) * 4)) == 0)
+for i, (when, seq) in enumerate(ROCKS.items()):
+    n = events_fired(seq, warm, t0=(90 + i * 10) * 60)
+    check(f"…and it still fires nothing when the rock comes round again ({when})",
+          n == 0, f"{n} event(s)")
+
+# A filter with no memory of a spot cannot know its wobble before it has watched it,
+# so it is allowed one event — and must then have learned. (This is the same
+# generosity that lets the raccoon through on first sight; see _gate.)
+for when, seq in ROCKS.items():
+    f = fresh()
+    first = events_fired(seq, f)
+    again = events_fired(seq, f, t0=5 * 60) + events_fired(seq, f, t0=10 * 60)
+    check(f"a cold filter fires at most once at the rock, then learns it ({when})",
+          first <= 1 and again == 0, f"{first} then {again}")
+
+# The rock only ever fired because its wobble read as life, which also kept resetting
+# the "nothing has moved here" clock — so the spot could never be written off.
+f = fresh(static_after_secs=180, min_sightings=5)
+for m, seq in zip(range(0, 60, 5), list(ROCKS.values()) * 4):
+    replay(f, seq, t0=m * 60)
+check("the rock is eventually learned as scenery despite the wobble",
+      any(a["static"] for a in f.anchors),
+      f"{sum(1 for a in f.anchors if a['static'])} of {len(f.anchors)} anchors static")
+check("one boulder does not sprawl into a crowd of anchors", len(f.anchors) <= 6,
+      f"{len(f.anchors)} anchors")
+
+# The gate must be adaptive, not just higher: a real visitor at a learned scenery spot
+# still has to get through.
+f = fresh(static_after_secs=180, min_sightings=5)
+for m, seq in zip(range(0, 60, 5), list(ROCKS.values()) * 4):
+    replay(f, seq, t0=m * 60)
+walk = [(t, c, cf, [b[0] + int(t * 90), b[1], b[2] + int(t * 90), b[3]])
+        for t, c, cf, b in ROCK_1618[:8]]          # same boulder box, walking right
+check("something that genuinely walks out of the rock still fires",
+      events_fired(walk, f, t0=60 * 60) >= 1)
+check("the raccoon is unaffected by rock learning",
+      events_fired(RACCOON, f, t0=90 * 60) >= 1)
 
 print()
 if FAILS:

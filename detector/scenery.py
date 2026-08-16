@@ -33,6 +33,33 @@ So two gates, either of which alone would have killed every false event of that 
 
 Both gates step aside for a confident detection (`conf_certain`), so an unmistakable
 person is never held back, wherever they stand.
+
+--- the rock (2026-08-16, later the same day) -------------------------------------
+
+The bench above has one convenient property: its box is *pixel-identical* frame to
+frame. The rock in the corner of the same garden does not. It is big and irregular
+and MegaDetector does not quite agree with itself about where its edges are, so the
+box breathes by up to 28px while the rock, being a rock, does not move at all:
+
+    object            box displacement*   verdict
+    bench  09:26          0.000           a fixed threshold catches this
+    rock   16:17          0.028
+    rock   16:18          0.054
+    rock   16:14          0.064           …and this is where a fixed threshold dies
+    raccoon 03:53         0.062           real — and it moves LESS than the rock wobbles
+
+That is the whole difficulty: the rock's wobble is larger than the raccoon's real
+movement, so no single `min_move` can separate them. Worse, the wobble was
+self-perpetuating — reading as movement, it both cleared the gate AND reset the
+"nothing has moved here" clock, so the spot could never be written off as furniture;
+and it pushed the box past `iou_match`, so one boulder sprawled into 30 anchors, each
+born fresh and permissive. One of them was created 30 seconds before the first bad
+event.
+
+So the movement gate is no longer a constant. Each spot learns the wobble it actually
+shows while nothing is happening there, and movement at that spot must beat its own
+wobble. A spot we have only just noticed still gets the permissive `min_move` — which
+is precisely what keeps the raccoon, seen twice in its life, coming through.
 """
 import json, math, os, time
 
@@ -70,14 +97,20 @@ class SceneryFilter:
                   rather than making detections vanish with no explanation
     """
 
-    def __init__(self, path=None, iou_match=0.85, track_iou=0.30, min_move=0.02,
+    def __init__(self, path=None, iou_match=0.60, track_iou=0.30, min_move=0.02,
                  track_gap_secs=3.0, static_after_secs=180.0, min_sightings=5,
                  forget_secs=1800.0, conf_certain=0.70, conf_override=0.25,
-                 autosave_secs=60.0):
+                 jitter_slack=2.5, jitter_learn_secs=5.0, jitter_cap=0.25,
+                 home_alpha=0.05, jitter_decay=0.99, autosave_secs=60.0):
         self.path = path
-        self.iou_match = iou_match      # tight: is this the same fixed spot?
+        self.iou_match = iou_match      # is this the same fixed spot? (must tolerate wobble)
         self.track_iou = track_iou      # loose: is this the same moving object?
         self.min_move = min_move
+        self.jitter_slack = jitter_slack        # how far past its own wobble a spot must move
+        self.jitter_learn_secs = jitter_learn_secs
+        self.jitter_cap = jitter_cap            # a wobble bigger than this is not wobble
+        self.home_alpha = home_alpha            # how fast a spot's resting box is re-learned
+        self.jitter_decay = jitter_decay        # so a spot that settles down is trusted again
         self.track_gap_secs = track_gap_secs
         self.static_after_secs = static_after_secs
         self.min_sightings = min_sightings
@@ -104,7 +137,8 @@ class SceneryFilter:
         except (OSError, ValueError):
             return
         defaults = {"first_seen": 0.0, "last_seen": 0.0, "sightings": 0, "max_conf": 0.0,
-                    "moved_at": 0.0, "static": False, "static_conf": 0.0}
+                    "moved_at": 0.0, "static": False, "static_conf": 0.0,
+                    "home": None, "jitter": 0.0}
         for a in data.get("anchors", []):
             if "box" not in a or "cls" not in a:
                 continue
@@ -152,6 +186,42 @@ class SceneryFilter:
         self.tracks = [t for t in self.tracks
                        if now - t["last_seen"] <= max(self.track_gap_secs, 10.0)]
 
+    # ---- what counts as movement here -------------------------------------
+
+    def _gate(self, anchor, now):
+        """How far a box must travel from where its track began to count as alive.
+
+        A spot we have only just noticed is judged by `min_move`: we have no idea yet
+        how much its box breathes, and being generous is what lets the raccoon — seen
+        twice in its life — through. A spot we have watched long enough to know is
+        judged against the wobble it actually shows, so the rock has to beat the rock.
+        """
+        if (anchor["sightings"] < self.min_sightings
+                or now - anchor["first_seen"] < self.jitter_learn_secs):
+            return self.min_move
+        # The wobble is measured from where the box rests, so a swing from one extreme
+        # to the other is twice that — hence the slack on top.
+        return max(self.min_move, anchor["jitter"] * self.jitter_slack)
+
+    def _settle(self, anchor, box, moved):
+        """Learn where this spot rests and how much its box breathes while resting.
+
+        Only detections that did NOT count as movement teach it. Otherwise a person
+        walking across the anchor would inflate its wobble envelope on the way past
+        and leave the spot blind behind them.
+        """
+        home = anchor["home"] or [float(v) for v in box]
+        if not moved:
+            home = [h + (b - h) * self.home_alpha for h, b in zip(home, box)]
+            wobble = _displacement(box, home)
+            anchor["jitter"] = min(self.jitter_cap,
+                                   max(wobble, anchor["jitter"] * self.jitter_decay))
+        anchor["home"] = home
+        # Match on where the box rests, not on wherever we happened to first see it —
+        # otherwise the wobble walks the box out of its own anchor and it starts again.
+        anchor["box"] = [int(round(v)) for v in home]
+        self._dirty = True
+
     # ---- the gates --------------------------------------------------------
 
     def apply(self, dets, now=None):
@@ -166,7 +236,8 @@ class SceneryFilter:
             if anchor is None:
                 anchor = {"cls": cls, "box": list(box), "first_seen": now, "last_seen": now,
                           "sightings": 0, "max_conf": 0.0, "moved_at": 0.0,
-                          "static": False, "static_conf": 0.0}
+                          "static": False, "static_conf": 0.0,
+                          "home": [float(v) for v in box], "jitter": 0.0}
                 self.anchors.append(anchor)
             anchor["last_seen"] = now
             anchor["sightings"] += 1
@@ -175,6 +246,7 @@ class SceneryFilter:
 
             certain = conf >= self.conf_certain
             if anchor["static"] and not certain and conf <= anchor["static_conf"] + self.conf_override:
+                self._settle(anchor, box, moved=False)   # keep learning where it rests
                 suppressed.append((cls, conf, box, "scenery"))
                 continue
 
@@ -186,7 +258,9 @@ class SceneryFilter:
             track["box"] = list(box)
             track["last_seen"] = now
             if not track["moved"]:
-                track["moved"] = certain or _displacement(box, track["first_box"]) >= self.min_move
+                track["moved"] = (certain
+                                  or _displacement(box, track["first_box"])
+                                  >= self._gate(anchor, now))
 
             if track["moved"]:
                 confirmed.append((cls, conf, box))
@@ -195,6 +269,7 @@ class SceneryFilter:
             else:
                 unproven.append((cls, conf, box))
 
+            self._settle(anchor, box, track["moved"])
             self._promote(anchor, now)
 
         if self._dirty and self.autosave_secs and now - self._saved_at >= self.autosave_secs:
@@ -221,4 +296,6 @@ class SceneryFilter:
 
     def describe(self):
         st = [a for a in self.anchors if a["static"]]
-        return f"{len(st)} scenery spot(s) learned, {len(self.anchors)} tracked"
+        worst = max((a["jitter"] for a in self.anchors), default=0.0)
+        return (f"{len(st)} scenery spot(s) learned, {len(self.anchors)} tracked, "
+                f"worst wobble {worst:.3f}")
