@@ -128,16 +128,22 @@ def greet(tag_classes):
         if greet_once and _greet_state["done"]: return
         if now - _greet_state["at"] < greet_cooldown: return
         _greet_state["busy"] = True; _greet_state["at"] = now; _greet_state["done"] = True
+    text = tc.get("greet_text", "Hallo.")
     def _run():
-        try:
-            with talkmod.CameraTalk() as t:
-                t.play(greet_pcm)
-            print(f"\n[{time.strftime('%H:%M:%S')}] 🔊 greeted the camera ("
-                  f"{tc.get('greet_text','Hallo.')!r})", flush=True)
-        except Exception as e:
-            print(f"\n[{time.strftime('%H:%M:%S')}] talk failed: {e}", flush=True)
-        finally:
-            with _greet_lock: _greet_state["busy"] = False
+        err = None
+        for attempt in (1, 2):                            # retry once: talk is half-duplex,
+            try:                                          # a transient clash with video fails
+                with talkmod.CameraTalk() as t:
+                    t.play(greet_pcm)
+                log(f"greet: said {text!r}")              # to events.log, so it's diagnosable
+                print(f"\n[{time.strftime('%H:%M:%S')}] 🔊 greeted the camera ({text!r})", flush=True)
+                err = None; break
+            except Exception as e:
+                err = e; time.sleep(0.4)
+        if err is not None:
+            log(f"greet: FAILED {err}")
+            print(f"\n[{time.strftime('%H:%M:%S')}] talk failed: {err}", flush=True)
+        with _greet_lock: _greet_state["busy"] = False
     threading.Thread(target=_run, daemon=True).start()
 
 rec = CircularRecorder(cfg.get("rtsp_camera_direct") or cfg["rtsp_main"],
