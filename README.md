@@ -66,7 +66,7 @@ Check what it resolved to with `./.venv/bin/python h32env.py`.
 | **Animal/person detector + pre-roll recorder** | ✅ working (`h32 detect`, see `detector/`) |
 | **Mechanical PTZ** (pan/tilt the lens) | ⛔ parked — cloud-brokered; local replay doesn't work on this firmware (see notes) |
 | **Two-way talk** | ⛔ parked — same proprietary cloud path |
-| Raccoon-*specific* alert (vs any animal) | ⏳ next — needs a raccoon classifier stage |
+| Raccoon-*specific* alert (vs any animal) | ✅ working — SpeciesNet names the species (`speciesnet.py`) |
 
 The 🎛 drawer shows the PTZ/talk buttons disabled — parked, see notes below.
 
@@ -173,15 +173,35 @@ h32 detect test-event                         # fire one event to verify snapsho
   stop firing events — leave it off until you have measured false accepts, see `TODO.md`.
   ⚠️ Enrolled faces are personal data: `detector/faces_store.npz` is gitignored and must
   stay that way — this repo is public.
-- **What animal (`species.py`):** MegaDetector only says `animal`; this splits it into
-  **cat / raccoon / …** so events tag the species. CLIP *zero-shot* is useless on this
-  camera's night IR (flat softmax), but CLIP image *embeddings* separate the species
-  (raccoon vs cat scored 100% leave-one-out on the first clips), so it's nearest-reference
-  on those embeddings, trained on labelled crops. Bootstrap/grow it:
-  `detector/species.py train raccoon <clip>…` / `train cat <clip>…`. An animal that
-  matches nothing well, or sits between two species, stays generic `ANIMAL`. Refs live in
-  gitignored `detector/species_refs.npz`; needs `open_clip_torch`. Honest limit while data
-  is thin: night-raccoon + day-cat means it partly keys on lighting until more is labelled.
+- **What animal, and is that "person" really a person (`speciesnet.py`):** MegaDetector
+  only says `animal`/`person`/`vehicle`, **and in the dark it gets the class wrong** — at
+  21:18 on 2026-08-16 a black cat in the bushes scored `person 0.74`, which e-mailed a
+  PERSON alert and made the camera say "Hallo." to a cat. So the crop gets a second
+  opinion from **SpeciesNet** (Google, Apache-2.0, EfficientNetV2-M, 65M camera-trap
+  images, ~2000 classes), which both **names the species** and **can overrule a `person`
+  box**. Get the weights: `detector/get-speciesnet.sh` (~225MB, gitignored).
+
+  The veto is one-sided by design — it can demote a person, never invent one, and an
+  unsure verdict leaves the event alone, so a bad call costs a false alarm rather than a
+  missed person. The margin it relies on, measured over the archive:
+
+  | crops MegaDetector labelled `person` | n | P(human) |
+  |---|---|---|
+  | the 21:18 cat | 29 | 0.0017 – **0.0855** |
+  | real people (day + night) | 9 | **0.4909** – 0.9990 |
+
+  a 5.7× gap, so the 0.25 veto sits in clear air. Replayed over the archive it turns the
+  cat event into `ANIMAL`, names the 03:53 raccoon `RACCOON` (0.98) and the 06:51 visitor
+  `CAT` (0.91), leaves every real person a `PERSON` — and, as a bonus, vetoes the plant
+  pot and orange bucket MegaDetector had been calling people in daylight. Ask it directly
+  about any clip: `detector/speciesnet.py <clip>`.
+
+  ⚠️ This **replaced** the CLIP nearest-reference matcher in `species.py`, whose docstring
+  warned it "partly keys on lighting". It keyed on nothing else: an empty patch of night
+  pavement scored `raccoon 0.919` — higher than the real cat — and a night human scored
+  `raccoon 0.843`, because the references were 7 night-IR raccoons and 5 daylight cats.
+  Its "100% leave-one-out" was measuring night-vs-day. `species.py` is kept for its unit
+  tests and reference CLI but is no longer wired in.
 - **Learning who/what (`gallery.py`):** the detector quietly harvests a face crop of every
   person and a crop of every animal into a gitignored, size-bounded, de-duplicated gallery
   — the raw material for learning the household people (esp. the kids, who don't enrol well
@@ -194,9 +214,11 @@ h32 detect test-event                         # fire one event to verify snapsho
 - **Output:** annotated `…​.jpg` snapshot + `…​.mp4` clip + a line in `detector/events/events.log`.
 - **Tuning:** everything is in `detector/config.json` — `conf` thresholds, `imgsz`, `fps`,
   `roi`/`exclude_roi` polygons (1920×1080 space) to focus on the pond area, buffer/pre/post-roll.
-- **Known limits / next steps:** (1) *raccoon-specific* alerting is a stub —
-  `classify_raccoon()` in `detect.py` is where a raccoon classifier (Roboflow model or CLIP
-  zero-shot on the crop) plugs in; today every animal is tagged `ANIMAL`. (2) Very dark,
+- **Known limits / next steps:** (1) SpeciesNet only names a species it is ≥0.50 sure of,
+  and a poor crop (small, dark, facing away) stays a generic `ANIMAL` — that is the
+  intended fallback, not a bug: the 03:53:58 raccoon crops score 0.28–0.34 and go
+  un-named while the 03:53:07 ones hit 0.978. More light on the subject is the fix, not a
+  lower threshold. (2) Very dark,
   distant, foliage-occluded animals (like the first test raccoon) can be missed per-frame —
   foreground visits register fine, and continuous monitoring catches a visit across its many
   frames. (3) No pond ROI set yet (whole frame). (4) The pond water isn't in view, so

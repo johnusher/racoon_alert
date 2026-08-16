@@ -28,6 +28,9 @@ detector/scenery.json
 detector/faces_store*
 detector/faces_*.jpg
 detector/models/*.onnx
+# SpeciesNet's label list — a downloaded artifact like the weights beside it,
+# refetched by detector/get-speciesnet.sh
+detector/models/speciesnet_labels.txt
 
 .DS_Store
 

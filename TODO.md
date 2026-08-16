@@ -47,9 +47,25 @@ feeding two learners.
 
 - ✅ **Harvester** (`gallery.py`): detector saves face + animal crops (gitignored, deduped,
   bounded) with SFace embeddings on faces. Running now.
-- ✅ **Species** (`species.py`): cat/raccoon via nearest-reference on CLIP image embeddings
-  (zero-shot was useless on night IR). Bootstrapped raccoon(7)+cat(5) from the real clips;
-  events tag the species. Grow with `species.py train <label> <clip>`.
+- ✅ **Species** (`speciesnet.py`, 2026-08-16): Google's SpeciesNet on the crop — names the
+  species AND overrules MegaDetector's bad `person` calls. Replaced the CLIP matcher in
+  `species.py`, which was **measured to key on lighting, not species** (empty night
+  pavement scored `raccoon 0.919`, above the real cat; a night human scored 0.843). Its
+  "100% leave-one-out" was measuring night-vs-day. Weights: `get-speciesnet.sh`.
+  - ⚠️ **A "day model + night model" split is NOT the answer** and was considered and
+    rejected on evidence: SpeciesNet is robust across both (night human 0.975, daylight
+    human 0.999, empty night pavement `blank` 0.983). The old classifier was *accidentally*
+    a day/night model, which is precisely what was wrong with it. Don't rebuild that.
+  - ⚠️ **Eyeshine is not the give-away it looks like.** Tempting, and the biology is right
+    (cats + raccoons have a tapetum lucidum, humans do not — so it is an *animal-vs-human*
+    cue, not a cat-vs-raccoon one). But it is high-precision / low-recall: scanned all 380
+    frames of the 21:18 cat clip for bright paired blobs in the box and found **zero** —
+    the cat faced away throughout. Present ⇒ almost certainly an animal; absent ⇒ proves
+    nothing. Worth adding only as a cheap extra confirmation, never as the test.
+  - MegaDetector itself is unfixable here by tuning: on that cat it said person in 23 of 29
+    sampled frames, and CLAHE-off / imgsz 1920 / test-time augmentation were all measured
+    to be no better (1920 loses the animal entirely in 7/10 frames). The second opinion on
+    the crop is the fix, not a detector knob.
 - ⚠️ **Night IR washes faces to pure white up close** (seen 2026-08-16 20:51 — John's face/shirt blown out by the IR illuminator). That destroys the detail SFace needs, so night-up-close recognition is unreliable; **daylight faces are the good case**. The cluster-and-label tool must **filter over-exposed crops** (e.g. skip a face crop whose mean luma is near-saturated) so blown-out night faces don't pollute the enrolments.
 - ⏭ **Cluster-and-label tool (NOT built yet):** once face crops accumulate in the gallery,
   a tool that clusters the SFace embeddings (sklearn agglomerative/DBSCAN on cosine),
@@ -58,9 +74,10 @@ feeding two learners.
   ⚠️ **The 2yo from a high night-IR fisheye is at/past the edge of face recognition** — may
   only ever resolve to "a small child". **Person-box height** is a free coarse size prior
   (adult vs 6yo vs 2yo) for when no face is visible — worth adding to the harvest metadata.
-- ⏭ **Better species over time:** the harvester collects animal crops; label them (cat vs
-  raccoon vs fox) and `species.py train` to move past the night/day-lighting confound.
-  Individual-cat ID (our black cat vs neighbours') is a later stretch.
+- ⏭ **Better species over time:** the night/day-lighting confound is gone (SpeciesNet
+  replaced the CLIP refs), so the harvested crops are no longer needed to *fix* the
+  classifier — they are now for the thing SpeciesNet cannot do: **individual-cat ID**
+  (our black cat vs the neighbours'), which stays a CLIP/embedding job.
 - ⚠️ Everything harvested is real people's biometrics incl. children → gitignored, local only.
 
 ## 2. Identifying particular people — BUILT, one measurement still missing

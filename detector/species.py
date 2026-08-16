@@ -2,6 +2,14 @@
 """
 Species classifier — splits MegaDetector's generic "animal" into cat / raccoon / fox / …
 
+⚠️ SUPERSEDED 2026-08-16 by speciesnet.py, and no longer wired into detect.py. The
+"known limit" warned about at the bottom of this docstring turned out to be the whole
+story: measured on the real archive this classifier keyed on LIGHTING, not species —
+an empty patch of night pavement scored raccoon 0.919, higher than the actual cat did,
+and a real human at night scored raccoon 0.843. Its "100% leave-one-out" was measuring
+night-vs-day. Kept for the SpeciesMatcher unit (still tested) and the reference-set CLI;
+read speciesnet.py before reviving any of it.
+
 MegaDetector only says animal/person/vehicle. To tell John's black cat from a raccoon we
 classify the animal CROP. CLIP *zero-shot* was measured useless here — on this camera's
 night-IR crops the text-matching softmax is flat (~1/N, no signal). But CLIP's image

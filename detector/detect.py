@@ -26,7 +26,7 @@ from notify import EmailNotifier
 from scenery import SceneryFilter
 from faces import FaceIdentifier
 from gallery import Gallery
-from species import SpeciesClassifier
+from speciesnet import SpeciesNetClassifier, short_name
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
@@ -80,12 +80,18 @@ faces = FaceIdentifier(os.path.join(BASE, "models"), os.path.join(BASE, "faces_s
                        min_votes=fc.get("min_votes", 2))
 known_suppresses = fc.get("known_suppresses_event", False)
 
-# ---- species: split MegaDetector's "animal" into cat / raccoon / … ----
+# ---- species: name the animal, and check MegaDetector's "person" is really a person ----
+# MegaDetector's class is not the last word: it called a black cat `person 0.74` at 21:18
+# on 2026-08-16 and the camera greeted it. SpeciesNet re-reads the crop. See speciesnet.py.
 spc = cfg.get("species", {})
 species_on = spc.get("enabled", True)
-species = SpeciesClassifier(os.path.join(BASE, "species_refs.npz"),
-                            min_sim=spc.get("min_sim", 0.55), margin=spc.get("margin", 0.04))
-species_on = species_on and species.available and bool(species.matcher.refs)
+species = SpeciesNetClassifier(os.path.join(BASE, spc.get("model", "models/speciesnet_crop_4.0.1a.pt")),
+                               os.path.join(BASE, spc.get("labels", "models/speciesnet_labels.txt")),
+                               human_veto=spc.get("human_veto", 0.25),
+                               human_min=spc.get("human_min", 0.45),
+                               species_min=spc.get("species_min", 0.50))
+species_on = species_on and species.available
+verify_person = spc.get("verify_person", True) and species_on
 
 # ---- crop harvester: collect faces + animal crops to learn from later ----
 gc = cfg.get("gallery", {})
@@ -117,7 +123,10 @@ _greet_lock = threading.Lock()
 
 def greet(tag_classes):
     """Play the greeting to the camera speaker on a background thread (never blocks
-    detection). Fires on the configured class, once per run if greet_once."""
+    detection). Fires on the configured class, once per run if greet_once.
+
+    Takes the classes as VERIFIED by SpeciesNet, not MegaDetector's raw ones — that is
+    what stops the camera greeting a cat, which it did at 21:18 on 2026-08-16."""
     if not talk_on or greet_pcm is None:
         return
     if greet_on not in tag_classes:
@@ -246,16 +255,51 @@ def push(im):
 def log(msg):
     logf.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n"); logf.flush()
 
-def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
-    labels = {c for c, _, _ in dets}
-    species_label = None                                  # cat / raccoon / … or None=unknown
-    for c, cf, box in sorted((d for d in dets if d[0] == "animal"),
-                             key=lambda d: -(d[2][2]-d[2][0])*(d[2][3]-d[2][1])):
+def verify_species(img, dets, max_crops=4):
+    """Second opinion on MegaDetector's class, read off the crop by SpeciesNet.
+
+    MegaDetector's class is not the last word — it called a cat `person 0.74` at 21:18
+    on 2026-08-16, which e-mailed a PERSON alert and made the camera say "Hallo." to a
+    cat. A `person` box SpeciesNet is confident is NOT a human is rewritten to `animal`,
+    so everything downstream — tag, filename, e-mail, greeting — follows the corrected
+    class with no further special-casing.
+
+    The rule is deliberately one-sided (see speciesnet.py for the measured margins): it
+    can only ever demote a person, never invent one, and an unsure verdict changes
+    nothing. A wrong veto costs a missed alert, so it has to be the confident case only.
+
+    → (dets, species_label, note). Biggest boxes first, capped: ~140ms per crop, and
+    this runs once per event, behind the cooldown.
+    """
+    if not species_on or not dets:
+        return dets, None, ""
+    ranked = sorted(dets, key=lambda d: -(d[2][2] - d[2][0]) * (d[2][3] - d[2][1]))
+    out, notes, species_label = [], [], None
+    for i, (c, cf, box) in enumerate(ranked):
+        if c not in ("animal", "person") or i >= max_crops:
+            out.append((c, cf, box)); continue
         crop = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
-        if species_on and crop.size:
-            species_label, _sim = species.classify(crop)
-        break
-    tag = forced_tag or (species_label.upper() if species_label
+        try:
+            v = species.classify(crop)
+        except Exception as e:                            # never let the classifier
+            log(f"speciesnet: FAILED {e}")                # take the detector down
+            out.append((c, cf, box)); continue
+        if v is None:
+            out.append((c, cf, box)); continue
+        overruled = c == "person" and verify_person and v.not_human
+        notes.append(f"{c}[{v.describe()}{' OVERRULED' if overruled else ''}]")
+        out.append(("animal" if overruled else c, cf, box))
+        if species_label is None and v.species and (overruled or c == "animal"):
+            species_label = v.species
+    return out, species_label, " ".join(notes)
+
+
+def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
+    dets, species_label, species_note = verify_species(img, dets)
+    labels = {c for c, _, _ in dets}
+    # A named species becomes the tag (RACCOON/CAT); an unnamed one stays ANIMAL rather
+    # than risking a blank tag, because the tag is also the event filename.
+    tag = forced_tag or ((short_name(species_label) or "animal").upper() if species_label
                          else ("ANIMAL" if "animal" in labels else "PERSON"))
     detail = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
     if "person" in labels and faces_on:
@@ -268,7 +312,8 @@ def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     # Log the box coords too: a false positive that keeps firing from the same spot is
     # then obvious in events.log, which is how the bench in scenery.py was tracked down.
     log(f"{tag}  {detail}  {where}  snapshot={snap}"
-        + (f"  faces[{who_detail}]" if who_detail else ""))
+        + (f"  faces[{who_detail}]" if who_detail else "")
+        + (f"  {species_note}" if species_note else ""))
     monitor.add_event(tag, snap, detail, who=who)
     notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap), who=who)
     def _save():
@@ -276,7 +321,7 @@ def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
         if clip: monitor.set_clip(snap, os.path.basename(clip))
         log(f"clip: {os.path.basename(clip) if clip else 'FAILED'}")
     threading.Thread(target=_save, daemon=True).start()
-    return name
+    return name, labels
 
 # ---- threads ----
 def capture_loop():
@@ -338,7 +383,8 @@ print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
-print(f"    species: {'on' if species_on else 'off'} — {species.describe()}")
+print(f"    species: {'on' if species_on else 'off'} — {species.describe()}"
+      + ("   (may OVERRULE a MegaDetector 'person')" if verify_person else ""))
 print(f"    gallery: {'on' if gallery_on else 'off'} — harvesting crops to learn from"
       f" ({gallery.describe()})" if gallery_on else "    gallery: off")
 print(f"    talk: {'on' if talk_on else 'off'}"
@@ -362,7 +408,7 @@ if TEST:
     dets = detect(enhance(img))
     with LK: S["dets"], S["recording"], S["banner"] = dets, True, "TEST"
     print(f"forcing test event (real detections: {[(c, round(cf,2)) for c,cf,_ in dets]})")
-    name = fire_event(img, dets or [("test", 1.0, [40, 40, 300, 300])], forced_tag="TEST")
+    name, _ = fire_event(img, dets or [("test", 1.0, [40, 40, 300, 300])], forced_tag="TEST")
     time.sleep(cfg["postroll"] + 5)
     print(f"done → events/{name}.jpg + events/{name}.mp4 (monitor: {url})"); S["run"] = False; rec.stop(); sys.exit(0)
 
@@ -428,8 +474,9 @@ try:
                       f"  [{who_detail}]", flush=True)
             else:
                 last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
-                fire_event(img, fireable, who=who, who_detail=who_detail)
-                greet({c for c, _, _ in fireable})         # "Hallo." on a real person
+                _name, verified = fire_event(img, fireable, who=who, who_detail=who_detail)
+                greet(verified)                            # "Hallo." on a real person —
+                #   the VERIFIED classes, so a cat SpeciesNet demoted is not greeted
             faces.reset()                                  # next visit votes on its own
         dt = 1.0 / det_fps - (time.time() - t)
         if dt > 0: time.sleep(dt)
