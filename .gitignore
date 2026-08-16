@@ -49,3 +49,4 @@ detector/gallery/
 
 # trained species reference embeddings (training data, grows)
 detector/species_refs.npz
+detector/overnight.log
