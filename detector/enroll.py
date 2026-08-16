@@ -133,7 +133,7 @@ def harvest(ident, sources, secs, verbose=True):
                 else:
                     continue
             for box in boxes:
-                for fb, emb, score, fh in ident.faces_in_crop(frame, box):
+                for fb, emb, score, fh, _aligned in ident.faces_in_crop(frame, box):
                     found.append((label, emb, score, fh, frame, fb))
                     if verbose:
                         print(f"    {label:28} face {fh:5.0f}px  det={score:.2f}")

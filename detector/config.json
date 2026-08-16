@@ -47,6 +47,13 @@
     "greet_once": false,
     "greet_cooldown_secs": 120
   },
+  "gallery": {
+    "enabled": true,
+    "min_gap_secs": 15,
+    "dedup_cos": 0.94,
+    "max_faces": 1500,
+    "max_animals": 1500
+  },
   "buffer_secs": 120,
   "preroll": 20,
   "postroll": 15,

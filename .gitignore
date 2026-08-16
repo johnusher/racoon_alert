@@ -40,3 +40,6 @@ local.env
 
 # TTS scratch file from talk.py --say
 .talk_say.wav
+
+# harvested crops to learn from — real people (incl. children) biometrics; local only
+detector/gallery/

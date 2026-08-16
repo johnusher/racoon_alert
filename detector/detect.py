@@ -25,6 +25,7 @@ from server import MonitorServer
 from notify import EmailNotifier
 from scenery import SceneryFilter
 from faces import FaceIdentifier
+from gallery import Gallery
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
@@ -75,8 +76,19 @@ faces = FaceIdentifier(os.path.join(BASE, "models"), os.path.join(BASE, "faces_s
                        margin=fc.get("margin", 0.10),
                        vote_window_secs=fc.get("vote_window_secs", 45),
                        min_votes=fc.get("min_votes", 2))
-faces_on = faces_on and faces.available and bool(faces.matcher.people)
 known_suppresses = fc.get("known_suppresses_event", False)
+
+# ---- crop harvester: collect faces + animal crops to learn from later ----
+gc = cfg.get("gallery", {})
+gallery_on = gc.get("enabled", True)
+gallery = Gallery(os.path.join(BASE, "gallery"),
+                  min_gap_secs=gc.get("min_gap_secs", 15),
+                  dedup_cos=gc.get("dedup_cos", 0.94),
+                  max_per_kind=max(gc.get("max_faces", 1500), gc.get("max_animals", 1500)))
+# Faces run whenever we harvest, even before anyone is enrolled — that is how the
+# household gets learned. Recognition (naming) needs enrollments; harvesting does not.
+faces_available = faces.available
+faces_on = faces_on and faces.available and bool(faces.matcher.people)
 
 # ---- talk-back: greet a detected person through the camera speaker ----
 tc = cfg.get("talk", {})
@@ -311,6 +323,8 @@ print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
+print(f"    gallery: {'on' if gallery_on else 'off'} — harvesting crops to learn from"
+      f" ({gallery.describe()})" if gallery_on else "    gallery: off")
 print(f"    talk: {'on' if talk_on else 'off'}"
       + (f" — says {tc.get('greet_text','Hallo.')!r} ({tc.get('greet_voice','default')}) "
          f"on {'the first' if greet_once else 'each'} {greet_on}"
@@ -363,9 +377,20 @@ try:
         fireable = [d for d in confirmed if d[0] in ("animal", "person")]
         hits.append(1 if interesting else 0)
         # Faces are only looked for INSIDE a person box the scenery filter has cleared —
-        # an ungated search finds the plastic bucket (see faces.py).
-        face_hits = (faces.observe(img, [b for c, _, b in dets if c == "person"], now=t)
-                     if faces_on and any(c == "person" for c, _, _ in dets) else [])
+        # an ungated search finds the plastic bucket (see faces.py). Run them whenever we
+        # recognise OR harvest, so the household gets learned even before anyone's enrolled.
+        persons = [b for c, _, b in dets if c == "person"]
+        run_faces = (faces_on or gallery_on) and faces_available and persons
+        face_hits = faces.observe(img, persons, now=t) if run_faces else []
+        # Harvest crops to learn from later (rate-limited + deduped inside the gallery).
+        if gallery_on:
+            for aligned, emb, name in getattr(faces, "harvest", []):
+                gallery.add("face", aligned, {"who": name}, embedding=emb, now=t)
+            for c, cf, box in confirmed:
+                if c == "animal":
+                    a = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
+                    if a.size:
+                        gallery.add("animal", a, {"conf": round(cf, 2), "box": box}, now=t)
         recording = t < record_until
         banner = interesting[0][0].upper() if (recording and interesting) else None
         with LK:

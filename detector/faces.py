@@ -179,6 +179,7 @@ class FaceIdentifier:
         sface = os.path.join(models_dir, "face_recognition_sface_2021dec.onnx")
         self.available = os.path.exists(yunet) and os.path.exists(sface)
         self.matcher = FaceMatcher(**matcher_kw)
+        self.harvest = []                     # [(aligned_crop, embedding, name)] from last observe()
         if not self.available:
             return
         self.det = cv2.FaceDetectorYN.create(yunet, "", (320, 320), det_score, 0.3, 5000)
@@ -229,24 +230,28 @@ class FaceIdentifier:
             fh = float(r[3]) / scale
             if fh < self.min_face_px:
                 continue
-            emb = self.rec.feature(self.rec.alignCrop(big, r))
+            aligned = self.rec.alignCrop(big, r)
+            emb = self.rec.feature(aligned)
             fb = [int(cx1 + r[0] / scale), int(cy1 + r[1] / scale),
                   int(cx1 + (r[0] + r[2]) / scale), int(cy1 + (r[3] + r[1]) / scale)]
-            out.append((fb, emb.copy(), float(r[-1]), fh))
+            out.append((fb, emb.copy(), float(r[-1]), fh, aligned.copy()))
         return out
 
     def observe(self, frame, person_boxes, now=None):
         """Look for faces inside already-trusted person boxes and record what we saw.
-        Returns [(face_box, name|None, score)] for drawing on the monitor."""
+        Returns [(face_box, name|None, score)] for the monitor. The aligned crop +
+        embedding of each face are stashed in self.harvest for the gallery to collect."""
+        self.harvest = []                     # [(aligned_crop, embedding, name)]
         if not self.available:
             return []
         now = time.time() if now is None else now
         hits = []
         for box in person_boxes:
-            for fb, emb, _det, _fh in self.faces_in_crop(frame, box):
+            for fb, emb, _det, _fh, aligned in self.faces_in_crop(frame, box):
                 name, score, _gap = self.matcher.match(emb)
                 self.matcher.observe_match(name, score, now)
                 hits.append((fb, name, score))
+                self.harvest.append((aligned, emb, name))
         return hits
 
     def verdict(self, now=None):
