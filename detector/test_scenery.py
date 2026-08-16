@@ -182,6 +182,28 @@ ROCK_1618 = [
 FAILS = []
 
 
+# TRUE POSITIVE, MISSED — the friend who walked outside at 22:48 on 2026-08-16 and
+# stared straight at the camera, and got no alert. Reconstructed from the anchor the
+# detector persisted (scenery.json: cls=person sightings=2 max_conf=0.35 jitter=0.187)
+# and its console trace (`[22:48:45] person:0.31   hits=2/5`, `4 tracked, worst wobble
+# 0.187`). MegaDetector caught them in only two frames about ten seconds apart — and
+# track_gap_secs is 3.0, so the second detection began a BRAND NEW track whose
+# first_box is itself. Displacement from first_box is therefore 0.000 no matter how
+# far the person actually moved, and 0.31 is far below conf_certain 0.70, so nothing
+# can ever confirm them. Their box really had travelled 0.187 of its own size — NINE
+# times min_move — and the filter still logged it as wobble.
+#
+# This is a structural limit of a movement gate, not a threshold that wants nudging:
+# an intermittently-detected object can never accumulate displacement. Lowering
+# min_move cannot fix it (the displacement measured is exactly 0.000) and raising
+# track_gap_secs re-opens the door to the rock, whose gaps are the same size. The fix
+# lives in detect.py instead: SpeciesNet identifies the person and promotes them.
+FRIEND_2248 = [
+    (0.0,  "person", 0.31, [325, 608, 641, 1077]),
+    (10.2, "person", 0.35, [397, 612, 713, 1079]),
+]
+
+
 def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
     if not cond:
@@ -352,6 +374,25 @@ check("something that genuinely walks out of the rock still fires",
       events_fired(walk, f, t0=60 * 60) >= 1)
 check("the raccoon is unaffected by rock learning",
       events_fired(RACCOON, f, t0=90 * 60) >= 1)
+
+print("\n9. the limit of a movement gate: someone who stands still (2026-08-16 22:48)")
+# Documents WHY detect.py needs SpeciesNet's promote path. These assertions describe
+# the movement gate's ceiling; if one ever starts failing the gate got better and the
+# promote path may be able to relax, so check there before 'fixing' the test.
+check("the friend really did move, by 9x min_move",
+      round(_displacement(FRIEND_2248[1][3], FRIEND_2248[0][3]), 3) >= 0.18,
+      f"displacement={_displacement(FRIEND_2248[1][3], FRIEND_2248[0][3]):.3f} vs min_move=0.02")
+check("…but the gate confirms nothing, because each detection restarts the track",
+      len(replay(fresh(), FRIEND_2248)) == 0)
+check("…so no event fires — exactly the alert that went missing",
+      events_fired(FRIEND_2248, fresh()) == 0)
+check("they are still SEEN, so the monitor drew the box John saw",
+      len(replay_seen(fresh(), FRIEND_2248)) == 2)
+check("a lower min_move cannot rescue them (displacement really is 0.000)",
+      events_fired(FRIEND_2248, fresh(min_move=0.001)) == 0)
+check("only trusting confidence would rescue them — and that lets the bench back in",
+      events_fired(FRIEND_2248, fresh(conf_certain=0.30)) >= 1
+      and events_fired(BENCH_0926, fresh(conf_certain=0.30)) >= 1)
 
 print()
 if FAILS:

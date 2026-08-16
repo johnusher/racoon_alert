@@ -117,6 +117,19 @@ class Verdict:
         s = short_name(self.species)
         return s.upper() if s else None
 
+    @property
+    def identified(self):
+        """Did SpeciesNet positively recognise something worth alerting about?
+
+        This is the promote side of the veto, and the answer to a failure the movement
+        gate cannot fix on its own: a person who walks out and STANDS STILL never
+        displaces their box, so scenery.py holds them back as unproven for ever (see
+        the 22:48 friend in test_scenery.py). Furniture cannot sneak in this way — the
+        bench, the rock, the plant pot and the orange bucket all read `blank` 0.92-1.00,
+        which is neither a human nor a named species.
+        """
+        return bool(self.is_human or self.species)
+
     def __repr__(self):
         return (f"<Verdict {self.top_label}={self.top_p:.3f} human={self.human_p:.3f}"
                 f"{' NOT-HUMAN' if self.not_human else ''}"

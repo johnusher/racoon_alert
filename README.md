@@ -196,6 +196,17 @@ h32 detect test-event                         # fire one event to verify snapsho
   pot and orange bucket MegaDetector had been calling people in daylight. Ask it directly
   about any clip: `detector/speciesnet.py <clip>`.
 
+  It also works the other way round. The scenery filter asks *"has it moved?"* as a
+  proxy for *"is it alive?"*, and on 2026-08-16 at 22:48 a friend walked out, **stared
+  straight at the camera and got no alert**: standing still, their box never displaced,
+  and because MegaDetector only caught them in two frames ten seconds apart the track
+  expired in between — so displacement was measured from the box to itself and read
+  0.000 for ever. No threshold fixes that (`test_scenery.py` §9 pins the three dead
+  ends). So when an event *would* have fired but nothing cleared the movement gate,
+  SpeciesNet is asked directly and a positive identification fires anyway. Measured:
+  6/6 real people promoted, 0/6 furniture — the bench, shoe rack, paving, bush, plant
+  pot and bucket all read `blank` 0.92–0.98.
+
   ⚠️ This **replaced** the CLIP nearest-reference matcher in `species.py`, whose docstring
   warned it "partly keys on lighting". It keyed on nothing else: an empty patch of night
   pavement scored `raccoon 0.919` — higher than the real cat — and a night human scored

@@ -60,6 +60,26 @@ So the movement gate is no longer a constant. Each spot learns the wobble it act
 shows while nothing is happening there, and movement at that spot must beat its own
 wobble. A spot we have only just noticed still gets the permissive `min_move` — which
 is precisely what keeps the raccoon, seen twice in its life, coming through.
+
+--- what this gate CANNOT do (2026-08-16 22:48) -------------------------------------
+
+"Has it moved?" is a proxy for "is it alive?", and the proxy has a hole. A friend
+walked outside, stared straight at the camera, and got no alert. MegaDetector caught
+them in two frames about ten seconds apart at 0.31/0.35 — and because `track_gap_secs`
+is 3.0, the second detection began a brand-new track whose `first_box` is itself. The
+displacement measured is therefore 0.000 however far the person really walked, so
+nothing here can ever confirm them. Their box had in fact travelled 0.187 of its own
+size, NINE times `min_move`, and this file logged it as wobble.
+
+No threshold fixes that: `min_move` cannot go below the 0.000 that was measured, and
+raising `track_gap_secs` to bridge the gap re-opens the rock, whose gaps are the same
+length. Trusting confidence instead means dropping `conf_certain` to 0.30, which is
+squarely inside the bench's range. test_scenery.py section 9 pins all three dead ends.
+
+The way out is to stop using a proxy: detect.py asks SpeciesNet whether the thing is
+actually a person (`promote_unproven`), and furniture reads as `blank` so it still
+cannot get through. Movement remains the cheap first answer — this gate runs on every
+frame and the classifier does not.
 """
 import json, math, os, time
 

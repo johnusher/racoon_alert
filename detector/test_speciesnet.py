@@ -106,6 +106,23 @@ check("raccoon verdict tags RACCOON", v.tag == "RACCOON", str(v.tag))
 v = R.verdict(p(domestic_cat=0.342, blank=0.3))
 check("an unnamed species has no tag", v.tag is None, str(v.tag))
 
+print("\n11. .identified — the promote side, for someone who stands still")
+# The friend who walked out at 22:48 on 2026-08-16 and stared at the camera got no
+# alert: standing still, their box never moved, so the movement gate held them back
+# as 'unproven' for ever. A positive identification has to be able to fire on its own.
+check("a real person is identified", R.verdict(p(human=0.975)).identified)
+check("the worst real person is still identified", R.verdict(p(human=0.491)).identified)
+check("a named raccoon is identified", R.verdict(p(northern_raccoon=0.978)).identified)
+# …and the things the movement gate exists to suppress must NOT be promoted. These are
+# the measured verdicts for the bench, the rock, the plant pot and the orange bucket.
+for name, pr in (("bench", 0.921), ("plant pot", 0.99), ("orange bucket", 0.97),
+                 ("night pavement", 0.983), ("night bush", 0.947)):
+    v = R.verdict(p(blank=pr))
+    check(f"{name} (blank={pr}) is NOT promoted", not v.identified, repr(v))
+check("an unsure animal is not promoted", not R.verdict(p(domestic_cat=0.342, blank=0.3)).identified)
+check("a mid-range human is not promoted on its own",
+      not R.verdict(p(human=0.35, blank=0.3)).identified)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")

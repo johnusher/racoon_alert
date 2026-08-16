@@ -92,6 +92,9 @@ species = SpeciesNetClassifier(os.path.join(BASE, spc.get("model", "models/speci
                                species_min=spc.get("species_min", 0.50))
 species_on = species_on and species.available
 verify_person = spc.get("verify_person", True) and species_on
+promote_on = spc.get("promote_unproven", True) and species_on
+promote_gap = spc.get("promote_gap_secs", 5.0)
+_promote_at = 0.0
 
 # ---- crop harvester: collect faces + animal crops to learn from later ----
 gc = cfg.get("gallery", {})
@@ -294,6 +297,47 @@ def verify_species(img, dets, max_crops=4):
     return out, species_label, " ".join(notes)
 
 
+def promote_unproven(img, unproven, now):
+    """Let SpeciesNet fire an event the movement gate is holding back.
+
+    The gate asks "has it moved?" as a proxy for "is it alive?", and that proxy has a
+    hole: a person who walks out and STANDS STILL never displaces their box. Worse, if
+    MegaDetector only catches them in occasional frames the track expires between
+    sightings (track_gap_secs 3.0), so displacement is measured from the box to itself
+    and is 0.000 for ever — no threshold can rescue them. That is the friend at 22:48
+    on 2026-08-16 who stared straight at the camera and got nothing; the box was on the
+    monitor the whole time. See test_scenery.py section 9.
+
+    So ask the question directly instead of by proxy. SpeciesNet reads furniture as
+    `blank` (bench 0.92, plant pot 0.99, orange bucket 0.97, pavement 0.98), so the
+    things the gate exists to suppress cannot get in this way — only a positive
+    identification promotes.
+
+    Rate-limited: this is the one place the classifier runs outside an event, and a
+    rock sitting in an unproven state would otherwise ask it three times a second.
+    """
+    global _promote_at
+    if not promote_on or now - _promote_at < promote_gap:
+        return []
+    cands = [d for d in unproven if d[0] in ("animal", "person")]
+    if not cands:
+        return []
+    _promote_at = now
+    c, cf, box = max(cands, key=lambda d: (d[2][2] - d[2][0]) * (d[2][3] - d[2][1]))
+    crop = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
+    try:
+        v = species.classify(crop)
+    except Exception as e:
+        log(f"speciesnet promote: FAILED {e}")
+        return []
+    if v is None or not v.identified:
+        return []
+    log(f"promoted {c}:{cf:.2f}@{box} (movement gate held it back)  {v.describe()}")
+    print(f"\n[{time.strftime('%H:%M:%S')}] ✋ {c} not moving, but SpeciesNet says "
+          f"{v.top_label} {v.top_p:.2f} — firing anyway", flush=True)
+    return [(c, cf, box)]
+
+
 def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     dets, species_label, species_note = verify_species(img, dets)
     labels = {c for c, _, _ in dets}
@@ -465,6 +509,10 @@ try:
         if t - last_hb > 15:
             last_hb = t; print(f"\n[{time.strftime('%H:%M:%S')}] running: {frames} detections done, "
                                f"latest: {status}  ({scenery.describe()})  (monitor {url})")
+        # Nothing cleared the movement gate, but something is there and we would
+        # otherwise have fired: ask SpeciesNet whether it is a person standing still.
+        if not fireable and sum(hits) >= min_hits and (t - last_event) > cooldown:
+            fireable = promote_unproven(img, unproven, t)
         if fireable and sum(hits) >= min_hits and (t - last_event) > cooldown:
             who, _votes, who_detail = faces.verdict(t) if faces_on else (None, 0, "")
             is_person = any(c == "person" for c, _, _ in fireable)
