@@ -39,19 +39,43 @@ Then, only if a local stream exists:
 - **`detector/events/`** is a flat directory; filenames would need a camera prefix, and
   `scenery.json` must be per-camera (learned furniture is specific to where a camera points).
 
-## 2. Identifying particular people
+## 2. Identifying particular people — feasible, one measurement missing
 
-Spike pending: measure whether faces in this camera's actual footage are recognisable
-before choosing any stack. OpenCV 5.0.0 (already in the venv) ships YuNet face detection
-and SFace recognition, so no new dependencies — just two model files from OpenCV's zoo.
+Spiked 2026-08-16 against the one real person in the archive (the 00:32 clip, night IR).
+Stack needs **no new dependencies**: OpenCV 5.0.0 in the venv already ships YuNet face
+detection and SFace recognition; only two model files from OpenCV's zoo.
 
-Known constraint: every real-person frame in the archive is night IR from a high angle
-(body ~840px tall, so a face ~110px — workable on paper, hard in practice). There is no
-daylight person footage at all, because every daytime "person" event was the bench.
-Walking through the garden once in daylight would give ground truth we know the answer to.
+**What the footage supports:**
 
-⚠️ If this gets built: enrolled faces and embeddings are personal data about real people
-and must be gitignored from the start — this repo is public.
+| | result |
+|---|---|
+| face height when found | 107–117 px (SFace wants ≥50) |
+| YuNet confidence | 0.87–0.90 |
+| self-match across frames | **10/10 pairs**, cosine 0.517–0.833 (same-identity threshold 0.363) |
+| face visible when a person is detected | **5 of 13 frames ≈ 38%** |
+
+So recognition works *when a face is visible*, even in night IR — but a face is visible
+well under half the time. **Identify per visit, not per frame:** collect every face across
+the visit, match each, and vote. Unknown by default.
+
+⚠️ **Gate face detection on a person box.** Run whole-frame and it hallucinates: 13 "faces"
+in 39 frames of an *empty* garden, every one of them the plastic bucket — two dark marks
+read as eyes, the rim as a hairline. Pareidolia, the same failure mode as the bench, and
+the scenery filter already makes person boxes trustworthy enough to gate on.
+
+⚠️ **The missing measurement — do not skip this.** The archive holds exactly one identified
+human (the other night "person" events were a pair of shoes and the bench). So we measured
+that he matches *himself*; we could not measure whether he fails to match *someone else*.
+The false-accept rate is unknown, and night IR at a steep angle degrades discrimination in
+precisely the way that inflates false accepts. **Before building: one daylight walk-through
+by John and one by somebody else.** That yields the daylight sample the archive completely
+lacks, a second identity to measure false accepts against, and ground truth for both.
+
+Design note: enrol from camera frames, not a phone selfie — matching a daylight selfie
+against night IR is a cross-domain problem and much harder than like-for-like.
+
+⚠️ Enrolled faces and embeddings are personal data about real people and must be gitignored
+from the start — this repo is public.
 
 ## 3. Two-way audio — closed, not possible locally on the PC530
 
