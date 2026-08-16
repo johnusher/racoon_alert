@@ -29,6 +29,7 @@ from faces import FaceIdentifier
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
 import h32env                                             # camera/e-mail from local.env
+import talk as talkmod                                    # send audio to the camera speaker
 
 cfg = h32env.detector_config(os.path.join(BASE, "config.json"))
 DEVICE = cfg.get("device", "mps") if torch.backends.mps.is_available() else "cpu"
@@ -76,6 +77,47 @@ faces = FaceIdentifier(os.path.join(BASE, "models"), os.path.join(BASE, "faces_s
                        min_votes=fc.get("min_votes", 2))
 faces_on = faces_on and faces.available and bool(faces.matcher.people)
 known_suppresses = fc.get("known_suppresses_event", False)
+
+# ---- talk-back: greet a detected person through the camera speaker ----
+tc = cfg.get("talk", {})
+talk_on = tc.get("enabled", False) and bool(h32env.CAMERA_DEVID)
+greet_pcm = None
+if talk_on:
+    try:                                                  # render the greeting once, up front
+        greet_pcm = talkmod.say_to_pcm(tc.get("greet_text", "Hallo."),
+                                       tc.get("greet_voice"))
+    except Exception as e:
+        print(f"    talk: greeting disabled ({e})"); talk_on = False
+greet_on = tc.get("greet_on", "person")
+greet_once = tc.get("greet_once", True)
+greet_cooldown = tc.get("greet_cooldown_secs", 30)
+_greet_state = {"done": False, "at": 0.0, "busy": False}
+_greet_lock = threading.Lock()
+
+def greet(tag_classes):
+    """Play the greeting to the camera speaker on a background thread (never blocks
+    detection). Fires on the configured class, once per run if greet_once."""
+    if not talk_on or greet_pcm is None:
+        return
+    if greet_on not in tag_classes:
+        return
+    now = time.time()
+    with _greet_lock:
+        if _greet_state["busy"]: return
+        if greet_once and _greet_state["done"]: return
+        if now - _greet_state["at"] < greet_cooldown: return
+        _greet_state["busy"] = True; _greet_state["at"] = now; _greet_state["done"] = True
+    def _run():
+        try:
+            with talkmod.CameraTalk() as t:
+                t.play(greet_pcm)
+            print(f"\n[{time.strftime('%H:%M:%S')}] 🔊 greeted the camera ("
+                  f"{tc.get('greet_text','Hallo.')!r})", flush=True)
+        except Exception as e:
+            print(f"\n[{time.strftime('%H:%M:%S')}] talk failed: {e}", flush=True)
+        finally:
+            with _greet_lock: _greet_state["busy"] = False
+    threading.Thread(target=_run, daemon=True).start()
 
 rec = CircularRecorder(cfg.get("rtsp_camera_direct") or cfg["rtsp_main"],
                        os.path.join(BASE, "buffer"), events_dir,
@@ -269,6 +311,9 @@ print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
+print(f"    talk: {'on' if talk_on else 'off'}"
+      + (f" — says {tc.get('greet_text','Hallo.')!r} ({tc.get('greet_voice','default')}) "
+         f"on first {greet_on}" if talk_on else " (set H32_CAMERA_DEVID in local.env)"))
 print(f"👁  LIVE MONITOR: {url}   (live video + boxes; records + alerts on detection)")
 if cfg.get("open_browser", True) and not TEST and not os.environ.get("H32_NO_BROWSER"):
     try: webbrowser.open(url)
@@ -341,6 +386,7 @@ try:
             else:
                 last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
                 fire_event(img, fireable, who=who, who_detail=who_detail)
+                greet({c for c, _, _ in fireable})         # "Hallo." on a real person
             faces.reset()                                  # next visit votes on its own
         dt = 1.0 / det_fps - (time.time() - t)
         if dt > 0: time.sleep(dt)

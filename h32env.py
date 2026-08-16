@@ -16,13 +16,15 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Defaults are deliberately generic — a fresh clone starts with nobody's real network.
 DEFAULTS = {
-    "H32_CAMERA_IP":   "192.168.1.100",
-    "H32_CAMERA_USER": "admin",
-    "H32_CAMERA_PASS": "",
-    "H32_GATEWAY_IP":  "192.168.1.1",
-    "H32_PHONE_IP":    "",
-    "H32_IFACE":       "en0",
-    "H32_EMAIL_TO":    "",
+    "H32_CAMERA_IP":    "192.168.1.100",
+    "H32_CAMERA_USER":  "admin",
+    "H32_CAMERA_PASS":  "",
+    "H32_GATEWAY_IP":   "192.168.1.1",
+    "H32_PHONE_IP":     "",
+    "H32_IFACE":        "en0",
+    "H32_EMAIL_TO":     "",
+    "H32_CAMERA_DEVID": "",           # per-camera id for two-way talk (see local.env)
+    "H32_CAMERA_CONST": "e4126900",   # platform constant for the talk protocol
 }
 
 
@@ -42,13 +44,15 @@ def _load():
 
 _env = _load()
 
-CAMERA_IP   = _env["H32_CAMERA_IP"]
-CAMERA_USER = _env["H32_CAMERA_USER"]
-CAMERA_PASS = _env["H32_CAMERA_PASS"]
-GATEWAY_IP  = _env["H32_GATEWAY_IP"]
-PHONE_IP    = _env["H32_PHONE_IP"]
-IFACE       = _env["H32_IFACE"]
-EMAIL_TO    = _env["H32_EMAIL_TO"]
+CAMERA_IP    = _env["H32_CAMERA_IP"]
+CAMERA_USER  = _env["H32_CAMERA_USER"]
+CAMERA_PASS  = _env["H32_CAMERA_PASS"]
+GATEWAY_IP   = _env["H32_GATEWAY_IP"]
+PHONE_IP     = _env["H32_PHONE_IP"]
+IFACE        = _env["H32_IFACE"]
+EMAIL_TO     = _env["H32_EMAIL_TO"]
+CAMERA_DEVID = _env["H32_CAMERA_DEVID"]
+CAMERA_CONST = _env["H32_CAMERA_CONST"]
 
 
 def rtsp(stream=0):

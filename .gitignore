@@ -37,3 +37,6 @@ detector/recorder.log
 
 # site-local settings: camera address + password, LAN layout, alert address
 local.env
+
+# TTS scratch file from talk.py --say
+.talk_say.wav
