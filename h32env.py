@@ -19,7 +19,7 @@ DEFAULTS = {
     "H32_CAMERA_IP":   "192.168.1.100",
     "H32_CAMERA_USER": "admin",
     "H32_CAMERA_PASS": "",
-    "H32_GATEWAY_IP":  "***REMOVED-IP***",
+    "H32_GATEWAY_IP":  "192.168.1.1",
     "H32_PHONE_IP":    "",
     "H32_IFACE":       "en0",
     "H32_EMAIL_TO":    "",

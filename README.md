@@ -69,7 +69,7 @@ The 🎛 drawer shows the PTZ/talk buttons disabled — parked, see notes below.
 - **Main stream:** `rtsp://<user>:<pass>@<camera-ip>:554/realmonitor?channel=0&stream=0.sdp` (1080p H.264 + PCM-alaw audio)
 - **Sub stream:** `…&stream=1.sdp` (640×360)
 - ⚠️ **ONVIF must stay enabled in the IPC360 app** — that's what opens `:554`/`:8080`. If you turn it off, video stops working here.
-- ⚠️ **Change the default password.** These cameras ship as `admin` / `<vendor default>`; the IPC360 app
+- ⚠️ **Change the default password.** These cameras ship as `admin` / `123456`; the IPC360 app
   can change it. The RTSP stream is unencrypted on the LAN either way, so treat the camera as a
   LAN-only device and do **not** port-forward `:554` to the internet.
 
