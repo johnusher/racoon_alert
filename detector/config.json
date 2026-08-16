@@ -16,6 +16,16 @@
   "window": 5,
   "cooldown_secs": 30,
   "signal_timeout_secs": 8,
+  "faces": {
+    "enabled": true,
+    "min_face_px": 45,
+    "det_score": 0.7,
+    "threshold": 0.40,
+    "margin": 0.10,
+    "vote_window_secs": 45,
+    "min_votes": 2,
+    "known_suppresses_event": false
+  },
   "scenery": {
     "enabled": true,
     "min_move": 0.02,
@@ -41,5 +51,6 @@
   },
   "_comment": "roi/exclude_roi are [[x,y],...] polygons in 1920x1080 space. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example).",
   "_comment_scenery": "Static garden furniture reads as a low-confidence person to MegaDetector — that is what produced 56 bogus PERSON events on 2026-08-16. See scenery.py. min_move is how far a box must travel (as a fraction of its own size) before it counts as alive: raise it if furniture still gets through, lower it if slow animals are missed. static_after_secs is how long a never-moving spot must keep flickering before it is written off as scenery; conf_certain is the confidence at which a detection is believed regardless. Learned spots live in detector/scenery.json — delete that file to forget them.",
-  "_comment_signal": "signal_timeout_secs: no frame for this long and the monitor says NO CAMERA SIGNAL, detection pauses and no events fire (rather than sitting on the last frame with a ticking clock)."
+  "_comment_signal": "signal_timeout_secs: no frame for this long and the monitor says NO CAMERA SIGNAL, detection pauses and no events fire (rather than sitting on the last frame with a ticking clock).",
+  "_comment_faces": "Face identification (see faces.py). Needs detector/get-face-models.sh and somebody enrolled via detector/enroll.py. Faces are only looked for INSIDE a person box - searching the whole frame finds the plastic bucket. Identity is decided by voting across a visit because a face is only visible in ~38% of frames. threshold 0.40 sits above SFace's own 0.363 and margin 0.10 forces an ambiguous face to 'unknown', because the false-accept rate on this camera is UNMEASURED - see TODO.md. known_suppresses_event stays false until it is measured: turning it on lets a stranger who matches you cancel your own alert."
 }

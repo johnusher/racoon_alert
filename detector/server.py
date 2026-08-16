@@ -40,6 +40,7 @@ class MonitorServer:
         self.signal = None        # why not, when it isn't
         self.recording = False
         self.boxes = []           # current detections, in source-frame coordinates
+        self.faces = []           # current face hits: {box, who, score}
         self.frame_w = self.frame_h = 0
         self.last_frame = 0.0     # when the detector last got a frame (epoch seconds)
         self.mjpeg_clients = 0    # nobody watching → don't spend CPU encoding JPEGs
@@ -57,23 +58,27 @@ class MonitorServer:
         with self._lock:
             self.mjpeg_clients = max(0, self.mjpeg_clients + delta)
 
-    def set_state(self, online, signal, recording, boxes, frame_w, frame_h, last_frame=0.0):
+    def set_state(self, online, signal, recording, boxes, frame_w, frame_h, last_frame=0.0,
+                  faces=()):
         with self._lock:
             self.online, self.signal, self.recording = online, signal, recording
             self.boxes, self.frame_w, self.frame_h = boxes, frame_w, frame_h
             self.last_frame = last_frame
+            self.faces = list(faces)
             self.status = "live" if online else "no camera signal"
 
     def state(self):
         with self._lock:
             return {"status": self.status, "online": self.online, "signal": self.signal,
                     "recording": self.recording, "boxes": self.boxes,
+                    "faces": self.faces,
                     "frame_w": self.frame_w, "frame_h": self.frame_h,
                     "last_frame": self.last_frame, "events": self.events}
 
-    def add_event(self, tag, snapshot, detail="", clip=None):
+    def add_event(self, tag, snapshot, detail="", clip=None, who=None):
         self.events.insert(0, {"tag": tag, "snapshot": snapshot, "detail": detail,
-                               "clip": clip, "time": time.strftime("%H:%M:%S")})
+                               "clip": clip, "who": who,
+                               "time": time.strftime("%H:%M:%S")})
         self.events = self.events[:25]
 
     def set_clip(self, snapshot, clip):
@@ -132,6 +137,12 @@ class MonitorServer:
                     pass
                 finally:
                     server.watching(-1)
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), H)
+        try:
+            self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), H)
+        except OSError as e:
+            raise SystemExit(
+                f"h32 detector: port {self.port} is already in use ({e.strerror}).\n"
+                f"  Another detector is probably already running — "
+                f"`pkill -f detector/detect.py`, or set monitor_port in config.json.") from None
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         return self

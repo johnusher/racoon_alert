@@ -24,6 +24,7 @@ from recorder import CircularRecorder
 from server import MonitorServer
 from notify import EmailNotifier
 from scenery import SceneryFilter
+from faces import FaceIdentifier
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
@@ -62,6 +63,18 @@ scenery = SceneryFilter(os.path.join(BASE, "scenery.json"),
                         conf_override=sc.get("conf_override", 0.25))
 signal_timeout = cfg.get("signal_timeout_secs", 8)        # no frames for this long = no signal
 
+fc = cfg.get("faces", {})
+faces_on = fc.get("enabled", True)
+faces = FaceIdentifier(os.path.join(BASE, "models"), os.path.join(BASE, "faces_store.npz"),
+                       min_face_px=fc.get("min_face_px", 45),
+                       det_score=fc.get("det_score", 0.7),
+                       threshold=fc.get("threshold", 0.40),
+                       margin=fc.get("margin", 0.10),
+                       vote_window_secs=fc.get("vote_window_secs", 45),
+                       min_votes=fc.get("min_votes", 2))
+faces_on = faces_on and faces.available and bool(faces.matcher.people)
+known_suppresses = fc.get("known_suppresses_event", False)
+
 rec = CircularRecorder(cfg.get("rtsp_camera_direct") or cfg["rtsp_main"],
                        os.path.join(BASE, "buffer"), events_dir,
                        buffer_secs=cfg["buffer_secs"], seg_secs=cfg["seg_secs"],
@@ -77,7 +90,7 @@ notifier = EmailNotifier(os.path.join(BASE, "secrets.json"), cfg.get("email"))
 #   dets  — boxes we are acting on;  muted — boxes the scenery filter dropped (drawn grey)
 #   frame_ts / signal — when the last frame arrived, and why none are arriving if they aren't
 S = {"frame": None, "frame_ts": 0.0, "signal": "waiting for the first frame…",
-     "dets": [], "muted": [], "recording": False, "banner": None, "run": True}
+     "dets": [], "muted": [], "faces": [], "recording": False, "banner": None, "run": True}
 LK = threading.Lock()
 
 def live_at(now, ts):
@@ -110,8 +123,13 @@ def detect(img):
         dets.append((cls, conf, box))
     return dets
 
-def draw_overlay(img, dets, muted=(), recording=False, banner=None):
+def draw_overlay(img, dets, muted=(), recording=False, banner=None, face_hits=()):
     im = img.copy(); W = im.shape[1]
+    for fb, who, sc in face_hits:
+        col = (120, 230, 150) if who else (150, 200, 240)
+        cv2.rectangle(im, (fb[0], fb[1]), (fb[2], fb[3]), col, 2)
+        cv2.putText(im, f"{who or '?'} {sc:.2f}", (fb[0], max(14, fb[1] - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
     if roi is not None: cv2.polylines(im, [roi], True, (0, 200, 120), 2)
     for c, cf, box, *_ in muted:                          # scenery: shown, never acted on
         cv2.rectangle(im, (box[0], box[1]), (box[2], box[3]), GREY, 1)
@@ -161,7 +179,7 @@ def push(im):
 def log(msg):
     logf.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n"); logf.flush()
 
-def fire_event(img, dets, forced_tag=None):
+def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     labels = {c for c, _, _ in dets}
     racc = None
     for c, cf, box in sorted((d for d in dets if d[0] == "animal"),
@@ -169,14 +187,18 @@ def fire_event(img, dets, forced_tag=None):
         racc = classify_raccoon(img[box[1]:box[3], box[0]:box[2]]); break
     tag = forced_tag or ("RACCOON" if racc else ("ANIMAL" if "animal" in labels else "PERSON"))
     detail = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
+    if "person" in labels and faces_on:
+        detail += f"  who={who or 'unknown'}"
     where = " ".join(f"{c}@{box}" for c, _, box in dets) or "-"
     ts = time.strftime("%Y%m%d_%H%M%S"); name = f"{ts}_{tag.lower()}"; snap = f"{name}.jpg"
-    cv2.imwrite(os.path.join(events_dir, snap), draw_overlay(img, dets, banner=tag))
+    banner = f"{tag} · {who.upper()}" if who else tag
+    cv2.imwrite(os.path.join(events_dir, snap), draw_overlay(img, dets, banner=banner))
     print(f"\n🔔 {tag}: {detail}  → snapshot {snap}, recording clip…")
     # Log the box coords too: a false positive that keeps firing from the same spot is
     # then obvious in events.log, which is how the bench in scenery.py was tracked down.
-    log(f"{tag}  {detail}  {where}  snapshot={snap}")
-    monitor.add_event(tag, snap, detail)
+    log(f"{tag}  {detail}  {where}  snapshot={snap}"
+        + (f"  faces[{who_detail}]" if who_detail else ""))
+    monitor.add_event(tag, snap, detail, who=who)
     notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap))
     def _save():
         clip = rec.save_event(name)
@@ -216,6 +238,7 @@ def publish_loop():
         with LK:
             f = S["frame"]; ts = S["frame_ts"]; why = S["signal"]
             d = S["dets"]; m = S["muted"]; r = S["recording"]; b = S["banner"]
+            fh = S["faces"]
         live = live_at(now, ts)
         monitor.set_state(live, why, r,
                           [{"cls": c, "conf": round(cf, 2), "box": box, "scenery": False}
@@ -223,10 +246,12 @@ def publish_loop():
                           [{"cls": c, "conf": round(cf, 2), "box": box, "scenery": True,
                             "why": rsn} for c, cf, box, rsn in m],
                           f.shape[1] if f is not None else 0,
-                          f.shape[0] if f is not None else 0, ts)
+                          f.shape[0] if f is not None else 0, ts,
+                          [{"box": fb, "who": who, "score": round(sc, 2)}
+                           for fb, who, sc in fh])
         if monitor.mjpeg_clients:
             if live and f is not None:
-                push(draw_overlay(f, d, m, r, b))
+                push(draw_overlay(f, d, m, r, b, fh))
             else:
                 push(no_signal_card(why, ts, f.shape[:2] if f is not None else (720, 1280)))
         time.sleep(period)
@@ -240,6 +265,8 @@ threading.Thread(target=publish_loop, daemon=True).start()
 print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display {display_fps}fps"
       f"{' [TEST-EVENT]' if TEST else ''}")
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
+print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
+      + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
 print(f"👁  LIVE MONITOR: {url}   (live video + boxes; records + alerts on detection)")
 if cfg.get("open_browser", True) and not TEST and not os.environ.get("H32_NO_BROWSER"):
     try: webbrowser.open(url)
@@ -269,7 +296,7 @@ try:
         with LK: img, ts, why = S["frame"], S["frame_ts"], S["signal"]
         if not live_at(t, ts):                             # camera gone: detect nothing, fire nothing
             with LK:
-                S["dets"], S["muted"], S["banner"] = [], [], None
+                S["dets"], S["muted"], S["faces"], S["banner"] = [], [], [], None
                 S["recording"] = t < record_until          # the recorder reads the camera
             hits.clear()                                   # directly, so REC may still be true
             if t - last_hb > 15:
@@ -286,18 +313,33 @@ try:
         interesting = [d for d in dets if d[0] in ("animal", "person")]
         fireable = [d for d in confirmed if d[0] in ("animal", "person")]
         hits.append(1 if interesting else 0)
+        # Faces are only looked for INSIDE a person box the scenery filter has cleared —
+        # an ungated search finds the plastic bucket (see faces.py).
+        face_hits = (faces.observe(img, [b for c, _, b in dets if c == "person"], now=t)
+                     if faces_on and any(c == "person" for c, _, _ in dets) else [])
         recording = t < record_until
         banner = interesting[0][0].upper() if (recording and interesting) else None
-        with LK: S["dets"], S["muted"], S["recording"], S["banner"] = dets, muted, recording, banner
+        with LK:
+            S["dets"], S["muted"], S["recording"], S["banner"] = dets, muted, recording, banner
+            S["faces"] = face_hits
         status = " ".join(f"{c}:{cf:.2f}" for c, cf, _ in dets) or "-"
         if muted: status += f" [{len(muted)} scenery]"
+        if face_hits: status += " " + " ".join(f"<{n or '?'}>" for _, n, _ in face_hits)
         print(f"\r[{time.strftime('%H:%M:%S')}] {status:44} hits={sum(hits)}/{len(hits)}   ", end="", flush=True)
         if t - last_hb > 15:
             last_hb = t; print(f"\n[{time.strftime('%H:%M:%S')}] running: {frames} detections done, "
                                f"latest: {status}  ({scenery.describe()})  (monitor {url})")
         if fireable and sum(hits) >= min_hits and (t - last_event) > cooldown:
-            last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
-            fire_event(img, fireable)
+            who, _votes, who_detail = faces.verdict(t) if faces_on else (None, 0, "")
+            is_person = any(c == "person" for c, _, _ in fireable)
+            if known_suppresses and who and is_person:
+                last_event = t                             # recognised: stay quiet
+                print(f"\n[{time.strftime('%H:%M:%S')}] known person ({who}) — event suppressed"
+                      f"  [{who_detail}]", flush=True)
+            else:
+                last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
+                fire_event(img, fireable, who=who, who_detail=who_detail)
+            faces.reset()                                  # next visit votes on its own
         dt = 1.0 / det_fps - (time.time() - t)
         if dt > 0: time.sleep(dt)
 except KeyboardInterrupt:

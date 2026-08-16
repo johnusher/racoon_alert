@@ -39,7 +39,31 @@ Then, only if a local stream exists:
 - **`detector/events/`** is a flat directory; filenames would need a camera prefix, and
   `scenery.json` must be per-camera (learned furniture is specific to where a camera points).
 
-## 2. Identifying particular people — feasible, one measurement missing
+## 2. Identifying particular people — BUILT, one measurement still missing
+
+Shipped 2026-08-16: `faces.py` + `enroll.py` + `test_faces.py`, wired into `detect.py`.
+Events carry a `who=`; the monitor draws the face box and name. See the README for use.
+
+**Still to do — the false-accept measurement.** Everything below was measured against the
+one person in the archive, so we know he matches *himself*; we have never checked that
+somebody else *fails* to match him. Until that is done, leave `known_suppresses_event`
+false: turning it on lets a stranger who happens to match you cancel your own alert.
+
+```
+detector/enroll.py add john live --secs 40     # John, in daylight
+detector/enroll.py test <clip of someone else> # every line must say UNKNOWN
+```
+
+Held-out check that has been done (enrolled on 21.0–23.6s of the 00:32 clip, tested on
+23.6–26.5s, which enrolment never saw):
+
+| | score vs enrolled |
+|---|---|
+| same man, held-out frames | **7/7 identified**, 0.608–0.968 |
+| bench false-positive clip | 0.091 → unknown |
+| raccoon clip | no faces found at all |
+
+### What the footage supports
 
 Spiked 2026-08-16 against the one real person in the archive (the 00:32 clip, night IR).
 Stack needs **no new dependencies**: OpenCV 5.0.0 in the venv already ships YuNet face

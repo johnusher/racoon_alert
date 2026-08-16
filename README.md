@@ -136,6 +136,29 @@ h32 detect test-event                         # fire one event to verify snapsho
   A confident detection (`conf_certain`, default 0.70) skips both gates. Tune under `scenery`
   in `config.json`; `detector/test_scenery.py` replays the real recorded box sequences and
   checks the bench fires nothing while the raccoon and the person still do.
+- **Who is it (`faces.py`, optional):** identifies enrolled people on top of the person
+  detection. Uses OpenCV's own YuNet + SFace, so there are **no extra dependencies** —
+  just `./detector/get-face-models.sh` (~38MB) and somebody enrolled:
+
+  ```
+  ./detector/get-face-models.sh
+  detector/enroll.py add john live --secs 40   # walk into view; or pass clips/stills
+  detector/enroll.py list
+  detector/enroll.py test <clip>               # who does it think is in this clip?
+  ```
+
+  Three things it does deliberately, each measured on this camera's own footage:
+  **faces are only looked for inside a person box** (searching the whole frame finds the
+  plastic bucket — two dark marks read as eyes); **identity is decided per visit by
+  voting**, because a face is only visible in ~38% of the frames a person appears in; and
+  **anything ambiguous resolves to `unknown`** — a match must clear 0.40 (SFace's own
+  same-identity threshold is 0.363), beat the runner-up by 0.10, and be seen at least
+  twice. Enrolment drops shots that disagree with the rest, which is what stops a
+  mis-detection being learned as your face. Events gain a `who=`; the monitor draws the
+  face box and name. `known_suppresses_event` (default **off**) makes recognised people
+  stop firing events — leave it off until you have measured false accepts, see `TODO.md`.
+  ⚠️ Enrolled faces are personal data: `detector/faces_store.npz` is gitignored and must
+  stay that way — this repo is public.
 - **Recording:** `recorder.py` keeps a rolling ~120s circular buffer of 2s segments (video
   copy + AAC audio) from go2rtc's RTSP restream; on an event it assembles
   `[trigger-preroll … trigger+postroll]` into `detector/events/<ts>_<tag>.mp4`.
@@ -178,6 +201,7 @@ web/monitor.html the AI monitor UI — same controls, detection boxes drawn over
 web/video-rtc.js, web/video-stream.js   go2rtc player (vendored)
 detector/        animal detector + circular-buffer recorder (detect.py, recorder.py, config.json)
 detector/scenery.py  tells living things from garden furniture (test_scenery.py covers it)
+detector/faces.py    identifies enrolled people (enroll.py to manage them; test_faces.py)
 detector/samples/  a few real night frames + the raccoon clip used above (with the
                  camera's mic audio, as recorded)
 capture/         PTZ/cloud reverse-engineering + capture tooling

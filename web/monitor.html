@@ -55,6 +55,10 @@
   .b-vehicle{stroke:#9aa4b0} .t-vehicle{fill:#9aa4b0}
   .b-scenery{stroke:var(--scenery); stroke-width:1.5; stroke-dasharray:7 5}
   .t-scenery{fill:var(--scenery); font-size:15px; font-weight:400}
+  .b-face{stroke:#96e6a1; stroke-width:2} .t-face{fill:#96e6a1}
+  .b-face-unknown{stroke:#a8c8f0; stroke-width:2} .t-face-unknown{fill:#a8c8f0}
+  .who{color:#96e6a1; font-weight:700}
+  .who.unknown{color:#a8c8f0}
 
   /* no-signal / offline overlay */
   .veil{
@@ -309,22 +313,31 @@ window.addEventListener('resize', ()=>{ apply(); layout(); });
 // The video is letterboxed inside its element by object-fit:contain. Give the SVG the
 // same viewBox as the source frame and the same letterboxing, and box coordinates from
 // the detector land exactly on the picture at any window size or zoom level.
-let showBoxes = true, srcW = 0, srcH = 0, boxes = [];
+let showBoxes = true, srcW = 0, srcH = 0, boxes = [], faceBoxes = [];
 function layout(){
   const w = srcW || (videoEl && videoEl.videoWidth) || 0;
   const h = srcH || (videoEl && videoEl.videoHeight) || 0;
   if(w && h) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
 }
 function drawBoxes(){
-  if(!showBoxes || !boxes.length || !svg.getAttribute('viewBox')){ svg.innerHTML=''; return; }
+  if(!showBoxes || !svg.getAttribute('viewBox') || (!boxes.length && !faceBoxes.length)){
+    svg.innerHTML=''; return;
+  }
   const fs = Math.max(12, Math.round((srcW || 1920) / 64));   // label size in frame units
-  svg.innerHTML = boxes.map(b=>{
+  const parts = boxes.map(b=>{
     const [x1,y1,x2,y2] = b.box;
     const kind = b.scenery ? 'scenery' : b.cls;
     const label = b.scenery ? `${b.cls} ${b.conf} · scenery` : `${b.cls} ${b.conf}`;
     return `<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="3"/>`
          + `<text class="t-${kind}" font-size="${b.scenery?fs*0.8:fs}" x="${x1+3}" y="${Math.max(fs,y1-fs*0.35)}">${label}</text>`;
-  }).join('');
+  });
+  for(const f of faceBoxes){
+    const [x1,y1,x2,y2] = f.box;
+    const kind = f.who ? 'face' : 'face-unknown';
+    parts.push(`<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="2"/>`
+      + `<text class="t-${kind}" font-size="${fs*0.8}" x="${x1}" y="${Math.max(fs,y1-fs*0.3)}">${f.who||'?'} ${f.score}</text>`);
+  }
+  svg.innerHTML = parts.join('');
 }
 const btnBoxes = document.getElementById('btnBoxes');
 btnBoxes.onclick = ()=>{
@@ -346,13 +359,13 @@ async function poll(){
     showVeil('DETECTOR NOT RUNNING',
              'The camera stream is still live, but nothing is watching it for animals.',
              'h32 detect', 'No snapshots, clips or alerts are being produced.', true);
-    boxes = []; drawBoxes();
+    boxes = []; faceBoxes = []; drawBoxes();
     return;
   }
   online = !!d.online;
   srcW = d.frame_w || srcW; srcH = d.frame_h || srcH;
   layout();
-  boxes = d.boxes || []; drawBoxes();
+  boxes = d.boxes || []; faceBoxes = d.faces || []; drawBoxes();
   document.getElementById('rec').classList.toggle('on', !!d.recording);
 
   if(online){
@@ -384,7 +397,9 @@ function renderEvents(list){
   if(!list.length){ box.innerHTML='<div class="empty">none yet — watching…</div>'; return; }
   box.innerHTML = list.map(e=>`<div class="ev">
     <img src="${API}/file/${e.snapshot}" onerror="this.style.visibility='hidden'">
-    <div class="m"><div class="tag ${e.tag}">${e.tag}</div>
+    <div class="m"><div class="tag ${e.tag}">${e.tag}${
+      e.who!==undefined && e.tag==='PERSON'
+        ? ` <span class="who${e.who?'':' unknown'}">${e.who||'unknown'}</span>` : ''}</div>
     <div class="t">${e.time} · ${e.detail||''}</div>
     ${e.clip?`<a href="${API}/file/${e.clip}" target="_blank">▶ clip</a>`:''}</div></div>`).join('');
 }

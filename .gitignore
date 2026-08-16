@@ -23,6 +23,11 @@ detector/models/*.pt
 detector/samples/_*.jpg
 # scenery the detector has learned to ignore — specific to where this camera points
 detector/scenery.json
+# enrolled faces: real people's biometrics. This repo is public — never commit these.
+# Deliberately a wildcard: a half-written faces_store.npz.tmp.npz is just as personal.
+detector/faces_store*
+detector/faces_*.jpg
+detector/models/*.onnx
 
 .DS_Store
 
