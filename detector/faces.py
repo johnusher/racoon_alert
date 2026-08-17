@@ -175,16 +175,33 @@ class FaceIdentifier:
         self.store_path = store_path
         self.min_face_px = min_face_px
         self.upscale_to = upscale_to
-        yunet = os.path.join(models_dir, "face_detection_yunet_2023mar.onnx")
-        sface = os.path.join(models_dir, "face_recognition_sface_2021dec.onnx")
-        self.available = os.path.exists(yunet) and os.path.exists(sface)
+        self._yunet = os.path.join(models_dir, "face_detection_yunet_2023mar.onnx")
+        self._sface = os.path.join(models_dir, "face_recognition_sface_2021dec.onnx")
+        self._det_score = det_score
+        self.available = os.path.exists(self._yunet) and os.path.exists(self._sface)
         self.matcher = FaceMatcher(**matcher_kw)
         self.harvest = []                     # [(aligned_crop, embedding, name)] from last observe()
+        self.det = self.rec = None            # loaded on first use — see _ensure_models()
         if not self.available:
             return
-        self.det = cv2.FaceDetectorYN.create(yunet, "", (320, 320), det_score, 0.3, 5000)
-        self.rec = cv2.FaceRecognizerSF.create(sface, "")
         self.load()
+
+    def _ensure_models(self):
+        """Load YuNet + SFace on first use rather than at construction.
+
+        They cost ~146MB of RSS and are only needed once a PERSON box actually appears —
+        which on a garden camera may be never in a given run, and never at all if both
+        face-id and the crop harvester are off. `available` stays a file check so callers
+        can still ask "could we do faces?" without paying for them. This matters most
+        when several cameras share a machine: the models are per-process, so not loading
+        them until they are wanted is the difference between paying 146MB once, N times,
+        or not at all.
+        """
+        if self.det is not None or not self.available:
+            return
+        self.det = self.cv2.FaceDetectorYN.create(self._yunet, "", (320, 320),
+                                                  self._det_score, 0.3, 5000)
+        self.rec = self.cv2.FaceRecognizerSF.create(self._sface, "")
 
     # ---- the store (gitignored: real people's biometrics) ----
 
@@ -223,6 +240,7 @@ class FaceIdentifier:
         scale = max(1.0, min(6.0, self.upscale_to / crop.shape[1]))
         big = cv2.resize(crop, (int(crop.shape[1] * scale), int(crop.shape[0] * scale)),
                          interpolation=cv2.INTER_CUBIC)
+        self._ensure_models()                 # first person of the run pays for the models
         self.det.setInputSize((big.shape[1], big.shape[0]))
         _, rows = self.det.detect(big)
         out = []

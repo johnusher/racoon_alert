@@ -9,6 +9,24 @@ Audio is re-encoded to AAC so clips play everywhere.
 """
 import os, time, glob, threading, subprocess, signal
 
+
+def stray_recorder_pids(ps_output, buffer_dir, me=None):
+    """Which pids in `ps -axo pid=,command=` output are ffmpegs writing to OUR buffer?
+
+    Kept a pure function so the matching can be tested without spawning anything: it
+    decides what gets SIGINT'd, and a sloppy match here would kill somebody else's
+    ffmpeg. Matches on the buffer path, never on the word "ffmpeg" alone.
+    """
+    out = []
+    for line in ps_output.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if not pid.isdigit() or (me is not None and int(pid) == me):
+            continue
+        if "ffmpeg" in cmd and buffer_dir in cmd:
+            out.append(int(pid))
+    return out
+
+
 class CircularRecorder:
     def __init__(self, rtsp, buffer_dir, events_dir,
                  buffer_secs=120, seg_secs=2, preroll=20, postroll=15):
@@ -37,7 +55,48 @@ class CircularRecorder:
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=self._log, stderr=self._log)
         self._proc_started = time.time()
 
+    def reap_strays(self, wait=3.0):
+        """Kill any ffmpeg still writing into OUR buffer directory, and wait for it to go.
+
+        A detector that was force-killed leaves its recorder ffmpeg orphaned — re-parented
+        to launchd, still holding an RTSP connection to the camera, and still writing
+        seg_%Y%m%d_%H%M%S.ts into this very directory. Two writers sharing one naming
+        pattern interleave, and save_event() concatenates whatever falls in the window, so
+        clips come out spliced from two unsynchronised streams. Seen for real on
+        2026-08-17: an orphan from 07:18 was still writing alongside the live recorder at
+        07:46, alternating segments every two seconds.
+
+        It has to happen BEFORE the buffer is wiped, or the orphan simply refills it.
+        """
+        try:
+            ps = subprocess.run(["ps", "-axo", "pid=,command="],
+                                capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        pids = stray_recorder_pids(ps, self.buffer_dir, me=os.getpid())
+        for pid in pids:
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.kill(pid, sig)
+                except OSError:
+                    break                                  # already gone
+                deadline = time.time() + wait / 3
+                while time.time() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        break                              # it died
+                    time.sleep(0.1)
+                else:
+                    continue                               # still alive → next signal
+                break
+        if pids:
+            print(f"[recorder] reaped {len(pids)} stray ffmpeg(s) writing to the buffer: "
+                  f"{', '.join(str(p) for p in pids)}", flush=True)
+        return pids
+
     def start(self):
+        self.reap_strays()                                 # before the wipe, or it refills
         for f in glob.glob(os.path.join(self.buffer_dir, "seg_*.ts")):
             try: os.remove(f)
             except OSError: pass
