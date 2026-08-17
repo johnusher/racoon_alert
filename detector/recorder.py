@@ -27,6 +27,32 @@ def stray_recorder_pids(ps_output, buffer_dir, me=None):
     return out
 
 
+# How long a freshly launched ffmpeg gets to deliver its FIRST segment before the
+# watchdog gives up on it. Measured 2026-08-17: the Victure takes 3 s to over 6 s to start
+# a new RTSP session, and the old rule — "no new segment for 6 s", counted from launch —
+# killed slow opens just before they produced. Each kill leaves a stale session on the
+# camera, which makes the next open slower still, so the recorder churned for 25 minutes
+# with an EMPTY buffer (no clip for 20:54:46, `clip: FAILED` at 21:07:21).
+STARTUP_GRACE_SECS = 20.0
+
+
+def restart_reason(now, proc_started, newest, dead, stall, grace=STARTUP_GRACE_SECS):
+    """Why the watchdog should relaunch ffmpeg — "dead", "stalled", or None to leave it.
+
+    `newest` is the mtime of the newest segment in the buffer (0 if none). A segment
+    written BEFORE this launch is not evidence that this launch is delivering, so until
+    the first segment of the current process appears the yardstick is `grace`, not
+    `stall`; once it is flowing, `stall` seconds without a new segment is a stall.
+    """
+    if dead:
+        return "dead"
+    delivered = newest >= proc_started
+    window = stall if delivered else grace
+    if now - proc_started > window and now - newest > window:
+        return "stalled"
+    return None
+
+
 class CircularRecorder:
     def __init__(self, rtsp, buffer_dir, events_dir,
                  buffer_secs=120, seg_secs=2, preroll=20, postroll=15):
@@ -112,9 +138,9 @@ class CircularRecorder:
             segs = glob.glob(os.path.join(self.buffer_dir, "seg_*.ts"))
             newest = max((os.path.getmtime(f) for f in segs), default=0)
             dead = self.proc is None or self.proc.poll() is not None
-            stalled = (not dead) and (now - self._proc_started > stall) and (now - newest > stall)
-            if dead or stalled:
-                if stalled and self.proc:
+            why = restart_reason(now, self._proc_started, newest, dead, stall)
+            if why:
+                if why == "stalled" and self.proc:
                     try: self.proc.kill()
                     except Exception: pass
                 self._launch()

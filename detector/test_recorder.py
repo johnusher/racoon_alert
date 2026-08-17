@@ -15,7 +15,7 @@ Run:  ../.venv/bin/python detector/test_recorder.py
 import os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from recorder import stray_recorder_pids
+from recorder import stray_recorder_pids, restart_reason
 
 FAILS = []
 
@@ -67,6 +67,31 @@ print("\n5. an empty buffer path must not match everything")
 # A bug here would kill every ffmpeg on the machine, so make the failure mode explicit.
 got = stray_recorder_pids(PS, "/no/such/buffer/anywhere")
 check("a buffer dir nothing uses matches nothing", got == [], str(got))
+
+print("\n6. the watchdog must not kill a fresh ffmpeg before the camera has delivered anything")
+# 2026-08-17 from ~21:07: the west recorder's ffmpeg was killed and relaunched every ~6 s
+# for 25 minutes and buffer/west stayed EMPTY — the 20:54:46 event got no clip and the
+# 21:07:21 one logged `clip: FAILED`. The Victure takes anything from 3 s to over 6 s to
+# deliver the first segment of a new RTSP session, and the stall rule ("no new segment
+# for 6 s") counted from LAUNCH, so a slow open was killed just before it produced —
+# and every kill left a stale session on the camera, which made the next open slower
+# still (414 "Connection refused" in the older log). Once flowing, 6 s without a new
+# segment is still a stall; only the first one gets a longer wait.
+STALL, GRACE = 6, 20
+t0 = 1000.0
+check("a dead ffmpeg is restarted", restart_reason(t0 + 1, t0, newest=0, dead=True, stall=STALL, grace=GRACE) == "dead")
+check("no segment 7 s after launch is NOT a stall yet",
+      restart_reason(t0 + 7, t0, newest=0, dead=False, stall=STALL, grace=GRACE) is None)
+check("…nor 19 s after launch",
+      restart_reason(t0 + 19, t0, newest=0, dead=False, stall=STALL, grace=GRACE) is None)
+check("…but 21 s with nothing delivered is",
+      restart_reason(t0 + 21, t0, newest=0, dead=False, stall=STALL, grace=GRACE) == "stalled")
+check("a segment from a PREVIOUS launch does not count as this one delivering",
+      restart_reason(t0 + 21, t0, newest=t0 - 1, dead=False, stall=STALL, grace=GRACE) == "stalled")
+check("once flowing, 6 s without a new segment is a stall",
+      restart_reason(t0 + 30, t0, newest=t0 + 23, dead=False, stall=STALL, grace=GRACE) == "stalled")
+check("…and 5 s without one is not",
+      restart_reason(t0 + 30, t0, newest=t0 + 25, dead=False, stall=STALL, grace=GRACE) is None)
 
 print()
 if FAILS:
