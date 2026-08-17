@@ -34,6 +34,7 @@ Usage:
     detector/label_animals.py --review        # show what is already labelled and stop
 """
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -49,7 +50,11 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
 REFS = os.path.join(BASE, "animal_refs.npz")
-SHEET = os.path.join(BASE, "gallery", "_cluster.jpg")
+# One file PER CLUSTER, not one reused path: `open` on a path Preview already has up
+# just refocuses that window, so a single filename shows cluster 1 for every cluster —
+# which is how eleven different clusters all looked like hedgehogs on 2026-08-17.
+SHEET_DIR = os.path.join(BASE, "gallery")
+SHEET_GLOB = "_cluster_*.jpg"
 
 
 def unit(v):
@@ -203,19 +208,24 @@ def main():
     rows = [(f, l, by_file.get(f, e)) for f, l, e in rows]
 
     crops_dir = os.path.join(BASE, "gallery", "animals")
-    stopped = False
+    for old in glob.glob(os.path.join(SHEET_DIR, SHEET_GLOB)):
+        os.remove(old)                       # last run's sheets, so stale ones cannot be
+    stopped = False                          # mistaken for this run's
     for k in range(n_clusters):
         idx = [keep[j] for j in np.flatnonzero(lab == k)]
         files = [metas[i].get("file") for i in idx]
         events = sorted({metas[i].get("event", "live") for i in idx})
         tops = sorted({metas[i].get("top", "?") for i in idx})
-        sheet = contact_sheet([os.path.join(crops_dir, f) for f in files if f], SHEET)
+        sheet = contact_sheet([os.path.join(crops_dir, f) for f in files if f],
+                              os.path.join(SHEET_DIR, f"_cluster_{k + 1:02d}.jpg"))
         print(f"--- cluster {k + 1}/{n_clusters}: {len(idx)} crop(s)")
         print(f"    from: {', '.join(events[:4])}{' …' if len(events) > 4 else ''}")
         print(f"    speciesnet said: {', '.join(tops[:5])}")
         if sheet:
             print(f"    sheet: {sheet}")
-            if sys.platform == "darwin":
+            # Only when someone is actually there to look: a piped run should not
+            # scatter eleven Preview windows across the desktop.
+            if sys.platform == "darwin" and sys.stdin.isatty():
                 subprocess.run(["open", sheet], check=False)
         try:
             ans = input("    name (or s=skip, d=drop, q=quit): ").strip()
