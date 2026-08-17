@@ -59,6 +59,53 @@ tile, the detector and the recorder on ONE producer, so the camera sees one sess
 change is free, but a camera that drops out on ONE stream would disprove it. The link
 watch below is what will settle it, because it now records every dropout.
 
+### ⚠️ The real constraint is the 2.4 GHz cell, not the cameras (2026-08-17, evening)
+
+Measured while the west camera's video was streaming perfectly:
+
+| target | latency | loss |
+|---|---|---|
+| gateway `192.168.1.1` | **10 ms** | 0% |
+| west camera `.216` | **1877–4320 ms** | 0% eventual |
+| south VIMTAG `.124` | unreachable | 100% |
+| gate VIMTAG `.128` (freshly paired) | unreachable | 100% |
+
+The Mac's own link is healthy (−63 dBm, SNR 29 dB, 115 Mbit/s, MCS 13) and the gateway
+answers in 10 ms, so **the AP and this Mac are fine** — it is the path to the cameras
+that is collapsing. West's video kept flowing throughout, because TCP retries and go2rtc
+buffers where ICMP simply dies; "the picture is fine" is therefore NOT evidence that the
+link is fine, which is exactly why the link watch is worth having.
+
+Airtime, not bandwidth, is the scarce resource. Scan of the band: **12 networks on 2.4 GHz,
+4 of them sharing our channel 7, with neighbours at −56 dBm — stronger than our own AP at
+−63 dBm.** Channel 11 was empty in the same scan. A client on a weak link transmits at a
+low MCS and so occupies far more airtime per byte (the classic 802.11 performance
+anomaly), which means **a marginal camera does not just suffer, it degrades the whole
+cell for everything else.** Both VIMTAGs being unreachable while the Victure merely
+crawls fits that exactly.
+
+⚠️ **This supersedes the earlier "two concurrent RTSP sessions killed the south camera"
+theory, and probably the "the unit is faulty" one too.** Neither is disproven, but a
+congested, weak 2.4 GHz cell explains all of it — the south camera dying, its refusal to
+come back, and a brand-new second camera being unreachable from the moment it paired —
+without needing two separate hardware faults.
+
+**Decisive test, not yet run:** power off BOTH VIMTAGs and re-measure west. If west's
+round trip returns to ~10 ms, the VIMTAGs are crushing the cell and the fix is radio, not
+software.
+
+Fixes, by expected value:
+1. **Move the AP to 2.4 GHz channel 11** (non-overlapping, empty in the scan; ours shares 7
+   with three others, one of them stronger than us). Free, two minutes.
+2. **Drop the VIMTAGs from 2.5K to 1080p in the app.** A marginal link plus 2.5K is the
+   worst combination available; fewer bits is less airtime for everyone. Note the detector
+   gains nothing from 2.5K anyway — it resizes every frame to 1280.
+3. **Get the cameras closer to an AP**, or put one near the garden. For the permanent
+   mount this is the real answer: cameras on a weak radio are a standing tax on the whole
+   house network.
+4. 5 GHz is empty here but penetrates walls badly — plausible for a camera near the AP,
+   not for the far end of the garden.
+
 ### Link health — there is no WiFi signal strength to read
 
 The VIMTAG advertises `Dot11Configuration=false` and answers `GetDot11Status` with
