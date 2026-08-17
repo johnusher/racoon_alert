@@ -13,16 +13,24 @@ __pycache__/
 capture/*.pcap
 
 # detector runtime output + model weights (weights via detector/get-model.sh)
-detector/buffer/*.ts
-detector/events/*.mp4
-detector/events/*.jpg
-detector/events/*.txt
-detector/events/events.log
+# Recorded footage and snapshots. Ignored as WHOLE DIRECTORIES rather than by
+# extension: with one camera these were flat files, but each camera now gets its own
+# subdirectory (detector/events/west/…), and a per-extension rule silently stops
+# matching one level down. This is a public repo and these frames have real people
+# and children in them, so the rule has to be the safe one.
+# (`dir/*` rather than `dir/` so the .gitkeep can be re-included — git cannot
+#  re-include anything whose PARENT directory is excluded.)
+detector/buffer/*
+!detector/buffer/.gitkeep
+detector/events/*
+!detector/events/.gitkeep
 detector/*.pt
 detector/models/*.pt
 detector/samples/_*.jpg
-# scenery the detector has learned to ignore — specific to where this camera points
+# scenery the detector has learned to ignore — specific to where each camera points,
+# so there is one file per camera (scenery.west.json, scenery.south.json, …)
 detector/scenery.json
+detector/scenery.*.json
 # enrolled faces: real people's biometrics. This repo is public — never commit these.
 # Deliberately a wildcard: a half-written faces_store.npz.tmp.npz is just as personal.
 detector/faces_store*
@@ -43,6 +51,7 @@ local.env
 
 # TTS scratch file from talk.py --say
 .talk_say.wav
+.talk_say_*.wav   # per-process TTS temp (one detector per camera)
 
 # harvested crops to learn from — real people (incl. children) biometrics; local only
 detector/gallery/

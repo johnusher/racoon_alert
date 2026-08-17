@@ -27,11 +27,16 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8><title>h32 · detector<
 
 
 class MonitorServer:
-    def __init__(self, port, events_dir, fps=3, monitor_url="http://127.0.0.1:1984/monitor.html"):
+    def __init__(self, port, events_dir, fps=3, monitor_url="http://127.0.0.1:1984/monitor.html",
+                 camera=""):
         self.port = port
         self.events_dir = events_dir
         self.fps = fps
         self.monitor_url = monitor_url
+        # Which camera this detector watches. The monitor talks to one port per camera,
+        # so it can check the answer came from the detector it meant to ask — a crossed
+        # port would otherwise show one camera's boxes over another camera's video.
+        self.camera = camera
         self._jpeg = b""
         self._lock = threading.Lock()
         self.events = []          # newest first
@@ -54,6 +59,10 @@ class MonitorServer:
         self.email_alerts = True      # send the e-mail alert
         self.email_available = False  # is e-mail even configured? (greys the button out)
         self.on_switch = None         # detect.py hooks this to log a flip
+        # Reachability of this camera on the LAN (see link.py). These cameras report no
+        # WiFi signal strength of their own, so this is measured from here instead — and
+        # it is what separates "the camera fell off the network" from "the picture stalled".
+        self.link = None              # detect.py hooks a LinkMonitor here
 
     def switches(self):
         with self._lock:
@@ -97,18 +106,25 @@ class MonitorServer:
 
     def state(self):
         with self._lock:
-            return {"status": self.status, "online": self.online, "signal": self.signal,
+            return {"camera": self.camera,
+                    "status": self.status, "online": self.online, "signal": self.signal,
                     "recording": self.recording, "boxes": self.boxes,
                     "faces": self.faces,
                     "frame_w": self.frame_w, "frame_h": self.frame_h,
                     "last_frame": self.last_frame, "events": self.events,
                     "auto_record": self.auto_record, "email_alerts": self.email_alerts,
-                    "email_available": self.email_available}
+                    "email_available": self.email_available,
+                    "link": self.link.status() if self.link else None}
 
     def add_event(self, tag, snapshot, detail="", clip=None, who=None):
+        # `t` is the epoch seconds behind `time`. The monitor merges the event lists of
+        # every camera into one timeline, and "HH:MM:SS" alone sorts wrongly across
+        # midnight — 00:01:00 would rank below 23:59:00 and the newest event of the night
+        # would sink to the bottom of the list.
+        now = time.time()
         self.events.insert(0, {"tag": tag, "snapshot": snapshot, "detail": detail,
-                               "clip": clip, "who": who,
-                               "time": time.strftime("%H:%M:%S")})
+                               "clip": clip, "who": who, "t": round(now, 2),
+                               "time": time.strftime("%H:%M:%S", time.localtime(now))})
         self.events = self.events[:25]
 
     def set_clip(self, snapshot, clip):

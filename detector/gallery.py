@@ -34,12 +34,19 @@ def _unit(v):
 
 class Gallery:
     def __init__(self, path, min_gap_secs=20.0, dedup_cos=0.94, max_per_kind=800,
-                 recent_window=40):
+                 recent_window=40, source=""):
         self.path = path
         self.min_gap_secs = min_gap_secs
         self.dedup_cos = dedup_cos            # skip a crop this similar to a recent one
         self.max_per_kind = max_per_kind
         self.recent_window = recent_window
+        # Which camera these crops came from. The gallery is SHARED across cameras on
+        # purpose — one household, one set of animals — but `seq` below is a per-process
+        # count, so without this two detectors saving in the same second generate the
+        # same filename and one silently overwrites the other's crop while both append to
+        # the manifest. It also records where a crop was taken, which the labelling step
+        # wants anyway: the same fox looks different at the pond and at the gate.
+        self.source = source
         self._last_add = {}                   # kind -> last save time
         self._recent = {}                     # kind -> deque of recent embeddings
         os.makedirs(path, exist_ok=True)
@@ -120,13 +127,17 @@ class Gallery:
         import cv2
         d = self._dir(kind)
         seq = self.count(kind)
-        fname = f"{time.strftime('%Y%m%d_%H%M%S', time.localtime(now))}_{seq:05d}.jpg"
+        stamp = time.strftime('%Y%m%d_%H%M%S', time.localtime(now))
+        src = f"{self.source}_" if self.source else ""
+        fname = f"{stamp}_{src}{seq:05d}.jpg"
         try:
             cv2.imwrite(os.path.join(d, fname), crop_bgr)
         except Exception:
             return None
 
         entry = {"file": fname, "t": round(now, 2)}
+        if self.source:
+            entry["cam"] = self.source
         if meta:
             entry.update(meta)
         if embedding is not None:

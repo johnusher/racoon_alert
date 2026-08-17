@@ -19,7 +19,7 @@ interleaved with 20-byte keepalives (type 0x01). We just reproduce that byte-for
 The device id + const are per-camera and live in local.env (gitignored) — this is a
 public repo.
 """
-import argparse, os, socket, struct, subprocess, sys, time, wave
+import argparse, os, shutil, socket, struct, subprocess, sys, tempfile, time, wave
 
 import numpy as np
 
@@ -107,16 +107,22 @@ def load_wav(path):
 def say_to_pcm(text, voice=None):
     """macOS `say` -> wav -> 8 kHz mono. No third-party TTS needed.
     voice: a `say -v` name, e.g. "Anna" (German female). None = system default."""
-    tmp = os.path.join(BASE, ".talk_say.wav")
+    # A PER-PROCESS temp file, not a fixed one. There is a detector per camera now, and
+    # they start within a second of each other: with a shared path one process's `finally`
+    # deletes the wav another is still reading, and the read then fails with
+    # FileNotFoundError — which used to be reported as "`say` not found", blaming the one
+    # thing that was fine.
+    fd, tmp = tempfile.mkstemp(prefix=".talk_say_", suffix=".wav", dir=BASE)
+    os.close(fd)
     cmd = ["say", "-o", tmp, "--data-format=LEI16@22050"]
     if voice:
         cmd += ["-v", voice]
     cmd.append(text)
     try:
+        if shutil.which("say") is None:
+            raise SystemExit("`say` not found — this is macOS-only (or pass a .wav).")
         subprocess.run(cmd, check=True)
         return load_wav(tmp)
-    except FileNotFoundError:
-        raise SystemExit("`say` not found — this is macOS-only (or pass a .wav).")
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)

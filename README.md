@@ -14,11 +14,14 @@ also drive a Raspberry Pi + HDMI screen later.
 Type **`h32`** in a terminal → the media server starts and the viewer opens in your browser.
 
 ```
-h32            start the server (if needed) and open the viewer
+h32            start the server (if needed) and open the monitor wall
 h32 stop       stop the media server
 h32 restart    restart it
-h32 status     is it running?
+h32 status     what is running, and which cameras are configured
 h32 log        follow the go2rtc log
+h32 cameras    list the camera registry
+h32 probe <ip> is that thing on the network a camera we can actually use?
+h32 detect     run a detector for every configured camera (Ctrl-C stops them all)
 ```
 
 Viewer: <http://127.0.0.1:1984/>
@@ -35,13 +38,44 @@ python3 -m venv .venv && ./.venv/bin/pip install scapy   # only needed for PTZ c
 
 Then `h32` (add the alias if it isn't already: `alias h32="$PWD/h32"` in `~/.zshrc`).
 
-**`local.env` is where every site-specific value lives** — camera address, camera
-password, your LAN layout, the alert e-mail address. It is gitignored, and nothing else
+**`local.env` is where every site-specific value lives** — camera addresses, camera
+passwords, your LAN layout, the alert e-mail address. It is gitignored, and nothing else
 in the repo hardcodes any of it: `h32` exports these vars so go2rtc can expand the
 `${H32_*}` placeholders in `go2rtc.yaml`, and the Python tools read the same file via
 `h32env.py`. SMTP credentials are separate again, in `detector/secrets.json`.
 
-Check what it resolved to with `./.venv/bin/python h32env.py`.
+Check what it resolved to with `h32 cameras`.
+
+## Cameras
+
+The app runs **one, two or three cameras with no code change** — it is the same path
+either way. Two files decide what exists:
+
+| file | holds | committed? |
+|---|---|---|
+| `web/cameras.json` | who exists: id, display name, monitor port, tile stream, zone space | ✅ yes — no secrets |
+| `local.env` | each camera's whole source URL, credentials included | ⛔ gitignored |
+
+```sh
+H32_CAM_WEST="rtsp://admin:pw@192.168.1.216:554/realmonitor?channel=0&stream=0.sdp"
+H32_CAM_SOUTH="onvif://admin:pw@192.168.1.124:80?subtype=0"
+H32_CAM_GATE=""          # still in its box — no tile, no detector, no events
+```
+
+**A camera's protocol is just the scheme of its URL.** The Victure speaks RTSP, the
+VIMTAGs speak ONVIF, and nothing in the code branches on that — go2rtc handles both. A
+blank URL means the camera does not exist yet, which is the whole mechanism behind
+"works with however many cameras you own".
+
+⚠️ **Quote the values.** `h32` `source`s this file, and an unquoted `&` in an RTSP query
+string is a shell parse error that stops the app.
+
+⚠️ **The VIMTAGs must use `onvif://`, not `rtsp://`.** They hand out a *single-use* RTSP
+token that changes on every connection, so there is no URL that can be written down;
+`onvif://` makes go2rtc fetch a fresh one each time it connects. See TODO.md §1.
+
+Adding a camera is: put it on the network, `h32 probe <ip>`, paste the two lines it
+prints into `local.env`, `h32 restart`.
 
 ## Controls
 
@@ -60,7 +94,11 @@ Check what it resolved to with `./.venv/bin/python h32env.py`.
 
 | Feature | State |
 |---|---|
+| **Multi-camera wall** (1–3 cameras, tiled, click to focus) | ✅ working — per-camera controls, one merged event timeline |
+| **Camera link health** (RTT, packet loss, dropouts) | ✅ working — these cameras report no WiFi RSSI, so reachability is measured instead (`detector/link.py`) |
 | Live 1080p / 360p video | ✅ working (WebRTC, sub-second; MSE fallback) |
+| 2.5K HEVC video (VIMTAG) | ✅ working — played natively over MSE, no transcode |
+| Detection zones + gate rules | ⏭ schema in `cameras.json`, empty until the cameras are aimed |
 | Listen to camera mic | ✅ working (in the stream) |
 | Digital zoom + pan, snapshot, fullscreen | ✅ working (browser-side) |
 | **Animal/person detector + pre-roll recorder** | ✅ working (`h32 detect`, see `detector/`) |

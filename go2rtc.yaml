@@ -1,24 +1,47 @@
 # go2rtc config for the h32 camera app
-# Ingests the Victure PC530 (IPC365) RTSP and serves low-latency WebRTC to the browser.
+# Ingests every configured camera and serves low-latency video to the browser.
 #
-# The ${H32_*} placeholders are filled in by go2rtc from the environment. The `h32`
-# launcher exports them from local.env (gitignored — copy local.env.example), so the
-# camera address and password are never stored in this file.
+# The ${H32_CAM_*} placeholders are filled in by go2rtc from the environment. The `h32`
+# launcher exports them from local.env (gitignored — copy local.env.example), so no
+# camera address or password is ever stored in this file.
+#
+# A camera that is not in local.env expands to an EMPTY source. go2rtc starts fine with
+# one (measured) — the stream simply never produces, the monitor shows no tile for it,
+# and no detector is started. That is what makes 1, 2 and 3 cameras the same config.
+#
+# Stream names are the camera ids from web/cameras.json: <id> is the main stream and
+# <id>_sub the low-resolution one. The monitor tiles use _sub and the focused view uses
+# main; the detector always reads main.
 
 api:
   listen: ":1984"
-  static_dir: "${H32_DIR}/web"   # serve the custom h32 UI
+  static_dir: "${H32_DIR}/web"   # serve the custom h32 UI (and web/cameras.json)
 
 log:
   level: info
 
 streams:
-  # Main 1080p stream (video + camera mic audio)
-  camera: rtsp://${H32_CAMERA_USER}:${H32_CAMERA_PASS}@${H32_CAMERA_IP}:554/realmonitor?channel=0&stream=0.sdp
-  # Sub 640x360 stream (lighter; good for the Pi later)
-  camera_sub: rtsp://${H32_CAMERA_USER}:${H32_CAMERA_PASS}@${H32_CAMERA_IP}:554/realmonitor?channel=0&stream=1.sdp
+  # west — Victure PC530, patio & pond. 1080p H.264 + PCM-alaw audio.
+  # Plain RTSP: this camera has a guessable, stable path.
+  west: "${H32_CAM_WEST}"
+  west_sub: "${H32_CAM_WEST_SUB}"
+
+  # south — Vimtag 2.5K, lawn & car port. 2560x1440 + 640x360 HEVC, AAC audio.
+  # ONVIF rather than RTSP, and NOT as a convenience: this camera hands out a
+  # single-use RTSP token that changes on every connection (measured 2026-08-17), so
+  # there is no URL that could be written down here. onvif:// makes go2rtc ask the
+  # camera for a fresh one each time it connects, which is the only thing that works.
+  south: "${H32_CAM_SOUTH}"
+  south_sub: "${H32_CAM_SOUTH_SUB}"
+
+  # gate — Vimtag 2.5K, east entrance gate. Not yet on the network.
+  gate: "${H32_CAM_GATE}"
+  gate_sub: "${H32_CAM_GATE_SUB}"
 
 webrtc:
-  # Host candidate so WebRTC works on localhost without external STUN
+  # Host candidate so WebRTC works on localhost without external STUN.
+  # Note: WebRTC cannot carry H.265. A camera left on HEVC is still played, but over
+  # MSE instead (the player in web/video-rtc.js negotiates this itself) — which costs
+  # about a second of latency. Set the Vimtags to H.264 in the app to get WebRTC.
   candidates:
     - 127.0.0.1:8555

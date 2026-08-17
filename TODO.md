@@ -2,43 +2,107 @@
 
 Short-lived notes live in commit messages; this file is for threads that span sessions.
 
-## 1. Multi-camera — 2× VIMTAG 2.5K outdoor (bought 2026-08-16, not yet powered on)
+## 1. Multi-camera — DONE for 2 cameras, 3rd awaiting the gate mount (2026-08-17)
 
-Goal: all three cameras on one screen, the same detector/AI running across all of them.
+Goal: every camera on one screen, the same detector/AI running across all of them.
+**The gating unknown is answered: the VIMTAGs do expose a local stream.** Built and
+running today with `west` (Victure) + `south` (VIMTAG); `gate` is a blank line in
+local.env until the second VIMTAG is mounted.
 
-**Everything here is gated on one unknown: do the VIMTAGs expose a local stream?**
-The listing (`amazon.de/dp/B0FL7P95Y6`) advertises app/cloud/Alexa and says nothing about
-ONVIF or RTSP. VIMTAG models have historically supported both, but budget makers disable
-RTSP in some firmware, and this is a 2026 model. If they turn out cloud-only there is no
-local video to run AI on, and the options narrow to returning them or an ONVIF-capable
-replacement — so **probe before building anything.**
+### What the VIMTAG actually is (measured 2026-08-17, not taken from the listing)
 
-Probe, once they are on the WiFi (~2 minutes, read-only):
+| | |
+|---|---|
+| Local stream | ✅ full ONVIF 2.4 — Device + Media + **PTZ** services on `:80` |
+| Main | 2560×1440 **HEVC** 20 fps + AAC |
+| Sub | 640×360 HEVC 20 fps |
+| RTSP path | `/live/<devid>_p0_<TOKEN>` — **rotates on every resolution AND is single-use** |
+| Detector decode | 1.02 ms/frame (981 fps on one thread) — 2% of a core |
+| Browser | plays natively; `web/video-rtc.js:605` already scores `hvc1.` above H.264 |
 
-```
-nmap -p 80,554,8000,8080,8554,2020,34567 <camera-ip>   # what is even listening
-# ONVIF device service — the handshake that reveals the RTSP URL
-curl -s -X POST http://<ip>/onvif/device_service -H 'Content-Type: application/soap+xml' \
-     -d '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>
-         <GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"/></s:Body></s:Envelope>'
-./.venv/bin/python capture/… or a plain RTSP DESCRIBE against the usual paths
-```
+⚠️ **`onvif://` is mandatory, not a convenience.** A token resolved by go2rtc and handed
+to ffmpeg seconds later is rejected by the camera. There is no URL that can be written
+down, so anything that wants this camera's video must ask ONVIF for a fresh one at
+connect time — which `onvif://` does per producer start. Do not "optimise" this into a
+cached RTSP URL.
 
-Then, only if a local stream exists:
+⚠️ **Transcoding the 2.5K HEVC through go2rtc fails** — `ffmpeg:south#video=h264` dies on
+repeated `Could not find ref with POC` / `Error constructing the frame RPS`, because
+go2rtc's transcode chain re-serves the stream and the child ffmpeg cannot rebuild the
+reference set. It is not needed (the player does HEVC over MSE), and the 640×360 sub
+*does* transcode cleanly if it is ever wanted. Don't rediscover this.
 
-- **go2rtc** is already multi-stream — adding cameras is `streams:` entries, not a rewrite.
-- **`web/index.html` / `web/monitor.html`** are single-stream: need a camera picker and/or
-  a grid view. The monitor's box overlay is already keyed to a source frame size, so it
-  generalises, but `state.json` has to become per-camera.
-- **`detector/detect.py` is the real work.** It is a single-camera script built on module-level
-  globals (`S`, `LK`, one `CircularRecorder`, one `MonitorServer`, one `SceneryFilter`).
-  Three cameras means either three processes (simplest, ~3× the RAM and one model per
-  process) or one process with per-camera state objects and a shared model (leaner, needs
-  the globals refactored into a class). MegaDetector at 1280px is the cost driver — measured,
-  see "Hardware" below; note that dropping either `imgsz` or `fps` to make room is ruled out
-  there on evidence, and that one shared model is what keeps 5 cameras inside 8 GB of RAM.
-- **`detector/events/`** is a flat directory; filenames would need a camera prefix, and
-  `scenery.json` must be per-camera (learned furniture is specific to where a camera points).
+⚠️ **The app password is NOT the ONVIF password.** Setting the phone-app account to
+`egg123` left ONVIF answering only to `admin`/`admin` (egg123 gets ONVIF 400). The
+credential that streams the video is a separate "ONVIF / third-party access" user.
+**Both VIMTAGs are still on the factory ONVIF password.**
+
+### Codec: switch the VIMTAGs to H.264 in the app
+
+They are on H.265. It works, but `web/video-rtc.js` scores WebRTC+H265 0x240 >
+MSE+H265 0x230 > WebRTC+H264 0x220, and no desktop browser does H.265 over WebRTC — so
+H.265 lands on **MSE**, costing ~1s of latency versus WebRTC's sub-second. H.264 also
+makes all three cameras one code path and keeps the transcode fallback available. The
+bitrate cost is irrelevant on a link measured at 0% loss.
+
+### ⚠️ The south VIMTAG fell off the network under two concurrent streams (2026-08-17)
+
+After hours of stable single-stream probing, `south` went to **100% ping loss with an
+incomplete ARP entry** — off the LAN entirely, not merely stalled — and did not come back
+on its own. At the time h32 was asking it for **two** concurrent RTSP sessions: `south`
+(detector + recorder) and `south_sub` (the wall tile). go2rtc opens one connection per
+stream NAME, so the sub tile is a genuine second session.
+
+Mitigation shipped: `tile_stream: "main"` per camera in `web/cameras.json`, which puts the
+tile, the detector and the recorder on ONE producer, so the camera sees one session.
+**This is a hypothesis, not a proven cause** — it is consistent with the evidence and the
+change is free, but a camera that drops out on ONE stream would disprove it. The link
+watch below is what will settle it, because it now records every dropout.
+
+### Link health — there is no WiFi signal strength to read
+
+The VIMTAG advertises `Dot11Configuration=false` and answers `GetDot11Status` with
+nothing, so **RSSI is not available from these cameras** and a signal-bars icon would be
+invented. `detector/link.py` measures the honest substitute instead — ping RTT, rolling
+packet loss and dropout count — and the monitor shows it per tile. It also separates the
+two faults that look identical on screen: *off the network* (radio/power) versus
+*reachable but no video* (stream/session). One lost ping is deliberately not an outage,
+and a long outage counts as one dropout rather than one per packet.
+
+### Shape of the thing that got built
+
+- **`web/cameras.json`** — the registry: id, name, monitor port, tile stream, zone space.
+  No secrets. Served by go2rtc for free (it already serves `web/`), read off disk by the
+  detector. Camera URLs live in `local.env` as `H32_CAM_<ID>` / `_SUB`, **quoted** — an
+  unquoted `&` in an RTSP query string is a shell parse error that stops the whole app.
+- **A blank URL means the camera does not exist** — no tile, no detector, no events. That
+  is what makes 1, 2 and 3 cameras the same code path rather than three layouts; all four
+  cases (0/1/2/3) are verified by rendering the page headless.
+- **One detector process per camera**, `detect.py --camera <id>`, deriving events dir,
+  buffer, learned scenery and monitor port from the id. Measured: MegaDetector is 84 ms/
+  frame on this M3 Pro's MPS, so 3 cameras × 3 fps = 9 of ~15 available fps.
+- **`h32 probe <ip>`** answers the setup-day question in one command; `h32 detect`
+  supervises one detector per configured camera and Ctrl-C stops them all.
+
+### Still to do
+
+- Mount `gate`, then add its two lines to local.env. Nothing else should be needed.
+- **Zones + rules** — schema is in `cameras.json` (`zones`, `rules`, `zone_space`) and
+  ships empty, so every camera behaves exactly as before until a polygon is drawn. The
+  polygons cannot be drawn until the cameras are aimed. Target rules: anyone at the gate,
+  and the 2-year-old at the gate. ⚠️ Zone coordinates are in each camera's OWN frame size
+  — 2560×1440 for the VIMTAGs, 1920×1080 for the Victure.
+- A "draw the zone on the focused tile" tool, once the cameras are aimed. Until then the
+  polygons are hand-written, the same convention `roi`/`exclude_roi` already use.
+- **Zero cloud comms** (John, 2026-08-17): block each camera's WAN access at the router so
+  nothing reaches the vendor cloud. Needs a static DHCP lease per camera first, then a
+  firewall rule, then re-verify ONVIF/RTSP still work locally (they should — h32 only ever
+  talks to the LAN). Watch for the camera's clock drifting once NTP is blocked, since the
+  OSD timestamp is burned into every recorded frame.
+- Cross-camera reasoning (someone at the gate, then on the south lawn) is impossible with
+  one process per camera. That was a deliberate trade for isolation; revisit only if a
+  rule actually needs it.
+
 
 ### Hardware, and why `imgsz` cannot be traded for it (measured 2026-08-17)
 

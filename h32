@@ -1,15 +1,18 @@
 #!/bin/zsh
-# h32 — launch the local Victure PC530 camera app and open it in the browser.
+# h32 — launch the local camera app and open it in the browser.
 #   h32            start go2rtc (if needed) and open the viewer
 #   h32 stop       stop the go2rtc media server
 #   h32 restart    restart it
-#   h32 status     show whether it's running
+#   h32 status     show what is running, and which cameras are configured
 #   h32 log        tail the go2rtc log
-#   h32 detect     run the animal detector + recorder (needs go2rtc; Ctrl-C to stop).
-#                  Any detector already running is stopped first, so this always
-#                  replaces rather than failing on the busy monitor port.
-#   h32 detect test-event   fire one test event to verify snapshot+recording
-#   h32 detect stop         stop a running detector (incl. a detached one) and exit
+#   h32 cameras    list the camera registry (web/cameras.json + local.env)
+#   h32 probe <ip> is that thing on the network a camera we can actually use?
+#   h32 detect     run the detector for EVERY configured camera (Ctrl-C stops them all).
+#                  One process per camera; each has its own events, buffer, learned
+#                  scenery and monitor port, so one camera dying cannot blind the others.
+#   h32 detect <camera>          just that one camera, in the foreground
+#   h32 detect <camera> test-event   fire one test event to verify snapshot+recording
+#   h32 detect stop              stop every running detector and exit
 #   h32 say <text> speak text through the camera's speaker (German voice Anna)
 #   h32 play <f.wav>   play a wav file through the camera's speaker
 #   h32 harvest    mine the saved clips for animal crops + SpeciesNet embeddings
@@ -24,18 +27,39 @@ BIN="$DIR/go2rtc"
 CFG="$DIR/go2rtc.yaml"
 LOG="$DIR/go2rtc.log"
 VENV="$DIR/.venv"
+PY="$VENV/bin/python"
 
-# Site-local settings — camera address/password, alert address (gitignored).
+# Site-local settings — camera URLs, alert address (gitignored).
 # Exported so go2rtc can expand the ${H32_*} placeholders in go2rtc.yaml.
 export H32_DIR="$DIR"
 [[ -f "$DIR/local.env" ]] && { set -a; source "$DIR/local.env"; set +a }
 
-up() { nc -z 127.0.0.1 $PORT 2>/dev/null; }
+# Ask the registry which cameras exist / which are configured. Python because
+# web/cameras.json is the single source of truth and zsh has no business parsing JSON.
+cam_ids()  { "$PY" -c "import sys;sys.path.insert(0,'$DIR');import h32env;print('\n'.join(c.id for c in h32env.cameras()))" 2>/dev/null }
+live_ids() { "$PY" -c "import sys;sys.path.insert(0,'$DIR');import h32env;print('\n'.join(c.id for c in h32env.configured_cameras()))" 2>/dev/null }
+
+# Every camera in the registry gets its two vars EXPORTED, even when local.env does not
+# set them. go2rtc leaves an unset ${VAR} as a literal (measured) which then looks like a
+# real source; an empty one it accepts and simply never produces from — which is exactly
+# what "this camera is still in its box" should look like.
+export_camera_vars() {
+  local cid u
+  for cid in ${(f)"$(cam_ids)"}; do
+    u=${(U)cid}
+    eval "export H32_CAM_${u}=\"\${H32_CAM_${u}:-}\""
+    eval "export H32_CAM_${u}_SUB=\"\${H32_CAM_${u}_SUB:-}\""
+  done
+}
+export_camera_vars
+
+up() { nc -z 127.0.0.1 $PORT 2>/dev/null }
 
 ensure_up() {
   up && return 0
-  if [[ -z "$H32_CAMERA_IP" ]]; then
-    echo "h32: no camera configured — cp local.env.example local.env and fill it in" >&2
+  if [[ -z "$(live_ids)" ]]; then
+    echo "h32: no cameras configured — set H32_CAM_<ID> in local.env (see local.env.example)" >&2
+    echo "     registry: $DIR/web/cameras.json" >&2
     return 1
   fi
   echo "h32: starting go2rtc…"
@@ -45,66 +69,152 @@ ensure_up() {
 }
 
 start() {
-  ensure_up || { echo "h32: FAILED to start — check $LOG" >&2; return 1; }
+  ensure_up || { echo "h32: FAILED to start — check $LOG" >&2; return 1 }
   echo "h32: up on $URL — opening"
-  open "$URL"
+  open "${URL}monitor.html"
 }
 
-# Only one detector can exist: the second one cannot bind the monitor port and dies.
-# Running `h32 detect` almost always MEANS "replace whatever is running" — often a
-# detached one from an earlier session that is no longer attached to any terminal, so
-# there is nothing to Ctrl-C. SIGINT rather than SIGKILL so it saves the scenery it has
-# learned and shuts the recorder down cleanly.
-stop_detector() {
-  local pids
-  pids=$(pgrep -f "detector/detect.py" 2>/dev/null)
+cameras() { "$PY" "$DIR/h32env.py" }
+
+# Only one detector per camera: a second one cannot bind that camera's monitor port and
+# dies. Running `h32 detect` almost always MEANS "replace whatever is running" — often a
+# detached one from an earlier session with no terminal to Ctrl-C. SIGINT rather than
+# SIGKILL so it saves the scenery it has learned and shuts the recorder down cleanly.
+stop_detectors() {
+  local pat="${1:-detector/detect.py}" pids sig
+  pids=$(pgrep -f "$pat" 2>/dev/null)
   [[ -z "$pids" ]] && return 0
-  echo "h32: a detector is already running (pid ${pids//$'\n'/ }) — stopping it first…"
+  echo "h32: stopping running detector(s) (pid ${pids//$'\n'/ })…"
   # Escalate. SIGTERM as well as SIGINT because a detector started in the background
   # inherited SIGINT as ignored (POSIX, non-interactive shell) — detect.py puts SIGINT
   # back, but a detector from BEFORE that fix is still out there ignoring it.
-  local sig
   for sig in INT TERM KILL; do
     kill -$sig ${=pids} 2>/dev/null
     for i in {1..24}; do                     # 6s per signal; it saves state on the way out
-      pgrep -f "detector/detect.py" >/dev/null || { echo "h32: stopped."; return 0 }
+      pgrep -f "$pat" >/dev/null || { echo "h32: stopped."; return 0 }
       sleep 0.25
     done
     [[ $sig == KILL ]] || echo "h32: no response to SIG$sig — escalating" >&2
   done
-  echo "h32: could not stop the running detector" >&2
+  echo "h32: could not stop the running detector(s)" >&2
   return 1
 }
 
 detect() {
-  # `h32 detect stop` — there is no terminal to Ctrl-C when it was started detached.
   if [[ "$1" == "stop" ]]; then
-    stop_detector || true
+    stop_detectors || true
     pgrep -f "detector/detect.py" >/dev/null && echo "h32: detector still running" >&2 \
                                              || echo "h32: no detector running"
     return 0
   fi
-  ensure_up || { echo "h32: go2rtc failed — check $LOG" >&2; return 1; }
-  stop_detector
-  echo "h32: starting detector (Ctrl-C to stop)…"
-  exec "$VENV/bin/python" "$DIR/detector/detect.py" "$@"
+  ensure_up || { echo "h32: go2rtc failed — check $LOG" >&2; return 1 }
+
+  # A leading argument that names a camera means "just this one".
+  local -a ids
+  if [[ -n "$1" ]] && print -l ${(f)"$(cam_ids)"} | grep -qx -- "$1"; then
+    ids=("$1"); shift
+  else
+    ids=(${(f)"$(live_ids)"})
+  fi
+  if (( ${#ids} == 0 )); then
+    echo "h32: no cameras configured — nothing to detect on" >&2; return 1
+  fi
+
+  stop_detectors
+  # One browser tab for the whole wall, not one per camera.
+  export H32_NO_BROWSER=1
+
+  if (( ${#ids} == 1 )); then
+    echo "h32: starting detector for '${ids[1]}' (Ctrl-C to stop)…"
+    exec "$PY" "$DIR/detector/detect.py" --camera "${ids[1]}" "$@"
+  fi
+
+  echo "h32: starting ${#ids} detectors (${ids}) — Ctrl-C stops them all…"
+  local -a pids
+  local cid
+  for cid in $ids; do
+    "$PY" "$DIR/detector/detect.py" --camera "$cid" "$@" &
+    pids+=($!)
+    sleep 0.4                      # stagger: three model loads at once thrash the GPU
+  done
+  # Ctrl-C here must reach every child, or the ones that survive keep their monitor
+  # ports and the next `h32 detect` has to kill them anyway.
+  trap 'echo "\nh32: stopping ${#pids} detectors…"; kill -INT ${pids} 2>/dev/null' INT TERM
+  wait
+}
+
+# `h32 probe <ip>` — the setup-day question, answered in one command: is this thing a
+# camera we can actually use locally, or is it cloud-only and going back in its box?
+probe() {
+  local ip="$1"
+  echo "── ONVIF discovery on this LAN ──"
+  if up; then
+    curl -s --max-time 15 "http://127.0.0.1:${PORT}/api/onvif" || echo "  (go2rtc not answering)"
+    echo
+  else
+    echo "  go2rtc not running — start it with \`h32\` for discovery"
+  fi
+  [[ -z "$ip" ]] && { echo "\nusage: h32 probe <camera-ip>   for the full check"; return 0 }
+
+  echo "\n── is $ip up? ──"
+  ping -c 3 -W 2000 "$ip" 2>&1 | tail -2
+
+  echo "\n── open ports ──"
+  local p
+  for p in 80 443 554 8000 8080 8554 8899 2020 5000 10554; do
+    (nc -z -G 2 "$ip" $p 2>/dev/null && echo "  $p OPEN") &
+  done
+  wait
+
+  echo "\n── ONVIF services (the decisive test) ──"
+  curl -s --max-time 10 -X POST "http://${ip}/onvif/device_service" \
+    -H 'Content-Type: application/soap+xml; charset=utf-8' \
+    -d '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>
+        <GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"><Category>All</Category>
+        </GetCapabilities></s:Body></s:Envelope>' \
+    | grep -oE '<tt:XAddr>[^<]*' | sed 's/<tt:XAddr>/  /' || true
+
+  echo "\n── verdict ──"
+  echo "  A Media XAddr above + port 554 open  = usable. Put this in local.env:"
+  echo "      H32_CAM_<ID>=onvif://<user>:<pass>@${ip}:80?subtype=0"
+  echo "      H32_CAM_<ID>_SUB=onvif://<user>:<pass>@${ip}:80?subtype=1"
+  echo "  Nothing above = cloud-only. There is no local video to run the detector on."
+  echo "  NOTE: these cameras keep a SEPARATE ONVIF user from the phone-app account —"
+  echo "        changing the app password does not change this one."
 }
 
 stop() {
-  # kill go2rtc started from this dir
   pkill -f "$BIN -config $CFG" && echo "h32: stopped" || echo "h32: was not running"
+}
+
+status() {
+  up && echo "go2rtc: running on $URL" || echo "go2rtc: not running"
+  local cid n=0
+  for cid in ${(f)"$(live_ids)"}; do
+    if pgrep -f "detect.py --camera $cid" >/dev/null; then
+      echo "detector $cid: running"
+    else
+      echo "detector $cid: not running"
+    fi
+    (( n++ ))
+  done
+  (( n == 0 )) && echo "detectors: no cameras configured"
+  echo
+  cameras
 }
 
 case "${1:-start}" in
   start|"") start ;;
   stop)     stop ;;
   restart)  stop; sleep 0.6; start ;;
-  status)   up && echo "h32: running on $URL" || echo "h32: not running" ;;
+  status)   status ;;
   log)      tail -n 40 -f "$LOG" ;;
+  cameras)  cameras ;;
+  probe)    shift; probe "$@" ;;
   detect)   shift; detect "$@" ;;
-  say)      shift; "$VENV/bin/python" "$DIR/talk.py" --say "$*" --voice Anna ;;
-  play)     shift; "$VENV/bin/python" "$DIR/talk.py" "$@" ;;
-  harvest)  shift; "$VENV/bin/python" "$DIR/detector/harvest_refs.py" "$@" ;;
-  label)    shift; "$VENV/bin/python" "$DIR/detector/label_animals.py" "$@" ;;
-  *)        echo "usage: h32 [start|stop|restart|status|log|detect|say|play|harvest|label]" ;;
+  say)      shift; "$PY" "$DIR/talk.py" --say "$*" --voice Anna ;;
+  play)     shift; "$PY" "$DIR/talk.py" "$@" ;;
+  harvest)  shift; "$PY" "$DIR/detector/harvest_refs.py" "$@" ;;
+  label)    shift; "$PY" "$DIR/detector/label_animals.py" "$@" ;;
+  *)        echo "usage: h32 [start|stop|restart|status|log|cameras|probe|detect|say|play|harvest|label]" ;;
 esac

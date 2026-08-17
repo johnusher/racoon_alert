@@ -8,7 +8,7 @@ Model-free: synthetic unit vectors stand in for embeddings, tiny arrays for crop
 
 Run:  ../.venv/bin/python detector/test_gallery.py
 """
-import os, sys, tempfile, glob, json
+import os, sys, tempfile, glob, json, time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -99,6 +99,29 @@ with tempfile.TemporaryDirectory() as d:
     check("ready() agreeing means add() saves",
           bool(g7.add("animal", crop(), {"i": 1}, now=115.0)))
     check("a skipped add leaves the clock alone", not g7.ready("animal", now=120.0))
+
+    print("\n8. one gallery, three cameras — crops must not overwrite each other")
+    # The gallery is shared across cameras on purpose (one household, one set of
+    # animals), but `seq` is a per-PROCESS count. Two detectors saving in the same
+    # second therefore reach the same seq, and before the camera tag went into the
+    # filename one silently overwrote the other's crop while both appended a manifest
+    # line — leaving two entries with different embeddings pointing at one image, in
+    # the very file animal_match.py learns this garden's animals from.
+    west = Gallery(d + "/shared", min_gap_secs=0, dedup_cos=1.1, source="west")
+    gate = Gallery(d + "/shared", min_gap_secs=0, dedup_cos=1.1, source="gate")
+    fw = west.add("animal", crop(), {"i": 0}, now=500.0)
+    fg = gate.add("animal", crop(), {"i": 0}, now=500.0)   # same second, same seq
+    check("two cameras at the same instant produce different filenames", fw != fg,
+          f"{fw} vs {fg}")
+    check("both crops actually survive on disk",
+          len(set(os.listdir(d + "/shared/animals")) & {fw, fg}) == 2)
+    check("the manifest records which camera each crop came from",
+          {m.get("cam") for m in west.manifest("animal")} == {"west", "gate"})
+    # An unsourced gallery keeps its old filename shape, so existing crops still resolve.
+    plain = Gallery(d + "/plain", min_gap_secs=0, dedup_cos=1.1)
+    expected = time.strftime('%Y%m%d_%H%M%S', time.localtime(500.0)) + "_00000.jpg"
+    check("without a source the filename shape is unchanged",
+          plain.add("animal", crop(), {}, now=500.0) == expected)
 
 print()
 if FAILS:

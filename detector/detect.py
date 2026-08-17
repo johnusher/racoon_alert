@@ -22,6 +22,7 @@ import numpy as np, cv2, torch
 from ultralytics import YOLO
 from recorder import CircularRecorder
 from server import MonitorServer
+from link import LinkMonitor
 from notify import EmailNotifier
 from scenery import SceneryFilter
 from faces import FaceIdentifier
@@ -34,7 +35,27 @@ sys.path.insert(0, os.path.dirname(BASE))
 import h32env                                             # camera/e-mail from local.env
 import talk as talkmod                                    # send audio to the camera speaker
 
-cfg = h32env.detector_config(os.path.join(BASE, "config.json"))
+# ---- which camera is this detector watching? ----
+# One process per camera (see TODO.md §1): three cameras on this Mac cost ~1.2GB and
+# 9 of the ~15 MegaDetector fps an M3 Pro has, and a crash on the pond camera must not
+# blind the gate. Everything per-camera — events, buffer, learned scenery, monitor port
+# — is derived from this id, so two detectors can never write over each other.
+ARGS = sys.argv[1:]
+CAMERA = None
+if "--camera" in ARGS:
+    i = ARGS.index("--camera")
+    CAMERA = ARGS[i + 1] if i + 1 < len(ARGS) else None
+    del ARGS[i:i + 2]
+if CAMERA is None:                       # no --camera: watch the first configured one
+    _live = h32env.configured_cameras()
+    if not _live:
+        print("h32 detect: no cameras configured — set H32_CAM_<ID> in local.env "
+              "(see local.env.example), then `h32 status`", file=sys.stderr)
+        sys.exit(1)
+    CAMERA = _live[0].id
+
+cfg = h32env.detector_config(os.path.join(BASE, "config.json"), camera=CAMERA)
+CAM_NAME = cfg.get("camera_name", CAMERA)
 DEVICE = cfg.get("device", "mps") if torch.backends.mps.is_available() else "cpu"
 
 model = YOLO(os.path.join(BASE, cfg["model"]))
@@ -49,7 +70,7 @@ use_clahe = cfg.get("clahe", True)
 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 roi = np.array(cfg["roi"], np.int32) if cfg.get("roi") else None
 exclude = np.array(cfg["exclude_roi"], np.int32) if cfg.get("exclude_roi") else None
-events_dir = os.path.join(BASE, "events"); os.makedirs(events_dir, exist_ok=True)
+events_dir = cfg["events_dir"]; os.makedirs(events_dir, exist_ok=True)
 logf = open(os.path.join(events_dir, "events.log"), "a")
 COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120),
           "cat": (80, 200, 255), "raccoon": (80, 80, 255)}   # species share the animal box
@@ -57,7 +78,7 @@ GREY = (110, 116, 124)                                    # suppressed-as-scener
 
 sc = cfg.get("scenery", {})
 scenery_on = sc.get("enabled", True)
-scenery = SceneryFilter(os.path.join(BASE, "scenery.json"),
+scenery = SceneryFilter(cfg["scenery_path"],
                         iou_match=sc.get("iou_match", 0.60),
                         track_iou=sc.get("track_iou", 0.30),
                         min_move=sc.get("min_move", 0.02),
@@ -112,7 +133,8 @@ gallery_on = gc.get("enabled", True)
 gallery = Gallery(os.path.join(BASE, "gallery"),
                   min_gap_secs=gc.get("min_gap_secs", 15),
                   dedup_cos=gc.get("dedup_cos", 0.94),
-                  max_per_kind=max(gc.get("max_faces", 1500), gc.get("max_animals", 1500)))
+                  max_per_kind=max(gc.get("max_faces", 1500), gc.get("max_animals", 1500)),
+                  source=CAMERA)   # shared dir, one process per camera — see Gallery
 # Faces run whenever we harvest, even before anyone is enrolled — that is how the
 # household gets learned. Recognition (naming) needs enrollments; harvesting does not.
 faces_available = faces.available
@@ -123,11 +145,16 @@ tc = cfg.get("talk", {})
 talk_on = tc.get("enabled", False) and bool(h32env.CAMERA_DEVID)
 greet_pcm = None
 if talk_on:
+    # BaseException, not Exception: say_to_pcm signals a missing `say` with SystemExit,
+    # which is NOT an Exception subclass — so `except Exception` let it straight through
+    # and the whole detector exited during startup over an optional greeting, printing
+    # only the SystemExit message and no traceback. Talk is a nicety; detection is the
+    # job, and nothing optional may take it down.
     try:                                                  # render the greeting once, up front
         greet_pcm = talkmod.say_to_pcm(tc.get("greet_text", "Hallo."),
                                        tc.get("greet_voice"))
-    except Exception as e:
-        print(f"    talk: greeting disabled ({e})"); talk_on = False
+    except BaseException as e:
+        print(f"    talk: greeting disabled ({type(e).__name__}: {e})"); talk_on = False
 greet_on = tc.get("greet_on", "person")
 greet_once = tc.get("greet_once", True)
 greet_cooldown = tc.get("greet_cooldown_secs", 30)
@@ -169,15 +196,25 @@ def greet(tag_classes):
     threading.Thread(target=_run, daemon=True).start()
 
 rec = CircularRecorder(cfg.get("rtsp_camera_direct") or cfg["rtsp_main"],
-                       os.path.join(BASE, "buffer"), events_dir,
+                       cfg["buffer_dir"], events_dir,
                        buffer_secs=cfg["buffer_secs"], seg_secs=cfg["seg_secs"],
                        preroll=cfg["preroll"], postroll=cfg["postroll"])
 # The monitor page is served by go2rtc so it is same-origin with the WebRTC stream and
 # gets the real video + audio; it pulls boxes and events from our own port.
 MONITOR_URL = cfg.get("monitor_url") or "http://127.0.0.1:1984/monitor.html"
 monitor = MonitorServer(cfg.get("monitor_port", 8090), events_dir, fps=display_fps,
-                        monitor_url=MONITOR_URL)
+                        monitor_url=MONITOR_URL, camera=CAMERA)
 notifier = EmailNotifier(os.path.join(BASE, "secrets.json"), cfg.get("email"))
+# Watch the link to this camera. These cameras expose no WiFi signal strength of their
+# own (the 2.5K Vimtag advertises Dot11Configuration=false and answers GetDot11Status
+# with nothing), so reachability measured from here is the honest substitute — and it is
+# what tells "the camera fell off the network" apart from "the picture stalled".
+lk = cfg.get("link", {})
+link = LinkMonitor(cfg.get("camera_host", ""),
+                   period=lk.get("period_secs", 5.0),
+                   window=lk.get("window", 12))
+monitor.link = link
+link.start()
 # The monitor's two live switches start from config and can be flipped from the page.
 # E-mail can only be switched on if it is actually configured, so the button greys out
 # rather than pretending. Flips are logged — "why did I get no clip at 3am" should be
@@ -492,12 +529,13 @@ def _stop_signal(_signum, _frame):
 signal.signal(signal.SIGINT, signal.default_int_handler)
 signal.signal(signal.SIGTERM, _stop_signal)
 
-TEST = len(sys.argv) > 1 and sys.argv[1] == "test-event"
+TEST = bool(ARGS) and ARGS[0] == "test-event"
 url = MONITOR_URL
 monitor.start(); rec.start()
 threading.Thread(target=capture_loop, daemon=True).start()
 threading.Thread(target=publish_loop, daemon=True).start()
-print(f"h32 detector: device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display {display_fps}fps"
+print(f"h32 detector [{CAMERA}] {CAM_NAME}  →  monitor port {cfg.get('monitor_port')}")
+print(f"    device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display {display_fps}fps"
       f"{' [TEST-EVENT]' if TEST else ''}")
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
@@ -505,6 +543,7 @@ print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
 print(f"    species: {'on' if species_on else 'off'} — {species.describe()}"
       + ("   (may OVERRULE a MegaDetector 'person')" if verify_person else ""))
 print(f"    local refs: {'on' if matcher_on else 'off'} — {matcher.describe()}")
+print(f"    {link.describe()}")
 print(f"    switches: media recording {'ON' if monitor.auto_record else 'OFF'}, "
       f"email alerts {'ON' if monitor.email_alerts else ('OFF' if monitor.email_available else 'not configured')}"
       f"  — both flippable live on the monitor")

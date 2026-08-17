@@ -34,22 +34,35 @@
   .dot.live{background:var(--good); box-shadow:0 0 8px var(--good)}
   .dot.wait{background:var(--warn)}
   .dot.err{background:var(--bad)}
-  .rec{color:var(--rec); font-weight:700; font-size:12px; display:none}
-  .rec.on{display:inline-flex; align-items:center; gap:7px}
-  .rec .dot{background:var(--rec); box-shadow:0 0 8px var(--rec); animation:blink 1s infinite}
   @keyframes blink{50%{opacity:.3}}
 
-  main{position:relative; flex:1; min-height:0; display:flex}
-  .left{position:relative; flex:1; min-width:0; background:#000; overflow:hidden}
+  /* ---------------------------------------------------------------- the wall ---
+     One grid, three shapes. Three cameras tile awkwardly into a row — at 1440px a
+     third of the width is ~380px, too small to read a detection box — so three go
+     2x2 with the events list in the fourth cell. One or two cameras have room for
+     the events sidebar the single-camera page always had. */
+  main{position:relative; flex:1; min-height:0; display:grid; gap:8px; padding:8px}
+  main[data-n="1"]{grid-template-columns:1fr 302px; grid-template-rows:1fr}
+  main[data-n="2"]{grid-template-columns:1fr 1fr 302px; grid-template-rows:1fr}
+  main[data-n="3"]{grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr}
+  main[data-n="0"]{grid-template-columns:1fr; grid-template-rows:1fr}
+  /* Focus: the chosen tile takes the whole grid, the others step out of the flow. */
+  main.focused{grid-template-columns:1fr !important; grid-template-rows:1fr !important}
+  main.focused .tile:not(.focus), main.focused aside{display:none}
+
+  .tile{
+    position:relative; background:#000; border:1px solid var(--line); border-radius:var(--r);
+    overflow:hidden; min-width:0; min-height:0;
+  }
+  .tile.focus{border-color:#33414f}
   .stage{position:absolute; inset:0; overflow:hidden}
   .zoomer{position:absolute; inset:0; transition:transform .12s ease-out; will-change:transform}
   video-stream{display:block; width:100%; height:100%}
   video-stream video{width:100%; height:100%; object-fit:contain; background:#000}
   video-stream .info{display:none!important}
-  /* boxes live in the same box as the video and use its intrinsic coordinates */
-  #boxes{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
-  #boxes rect{fill:none; stroke-width:3; vector-effect:non-scaling-stroke}
-  #boxes text{font:600 20px -apple-system,system-ui,sans-serif}
+  .boxes{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+  .boxes rect{fill:none; stroke-width:3; vector-effect:non-scaling-stroke}
+  .boxes text{font:600 20px -apple-system,system-ui,sans-serif}
   .b-animal{stroke:#ff5050} .t-animal{fill:#ff5050}
   .b-person{stroke:#3cb4d2} .t-person{fill:#3cb4d2}
   .b-vehicle{stroke:#9aa4b0} .t-vehicle{fill:#9aa4b0}
@@ -60,75 +73,113 @@
   .who{color:#96e6a1; font-weight:700}
   .who.unknown{color:#a8c8f0}
 
-  /* no-signal / offline overlay */
+  /* tile caption — always readable, so you know which wall you are looking at */
+  .cap{
+    position:absolute; top:0; left:0; right:0; z-index:7; display:flex; align-items:center;
+    gap:8px; padding:8px 10px; font-size:12.5px; pointer-events:none;
+    background:linear-gradient(180deg,rgba(9,11,14,.85),rgba(9,11,14,0));
+  }
+  .cap .nm{font-weight:600; letter-spacing:.2px}
+  .cap .kit{color:var(--dim); font-size:11.5px}
+  /* Link health. NOT a WiFi signal bar: these cameras report no RSSI at all, so this
+     is round-trip time and packet loss measured from here — which is what actually
+     answers "why does this camera keep dropping out". */
+  .cap .link{
+    display:none; align-items:center; gap:5px; font-size:11px; font-weight:600;
+    font-variant-numeric:tabular-nums; padding:1px 7px; border-radius:999px;
+    border:1px solid var(--line); background:rgba(10,13,17,.65); letter-spacing:.02em;
+  }
+  .cap .link.show{display:inline-flex}
+  .cap .link i{width:6px; height:6px; border-radius:50%; background:currentColor; display:block}
+  .cap .link.good{color:var(--good); border-color:rgba(58,210,159,.4)}
+  .cap .link.fair{color:var(--warn); border-color:rgba(255,204,102,.45)}
+  .cap .link.poor{color:#ff9d5c; border-color:rgba(255,157,92,.5)}
+  .cap .link.down{color:var(--bad); border-color:var(--bad); background:rgba(255,107,107,.13)}
+  .cap .link.down i{animation:blink 1s infinite}
+  .cap .rec{color:var(--rec); font-weight:700; font-size:11px; display:none;
+            align-items:center; gap:5px}
+  .cap .rec.on{display:inline-flex}
+  .cap .rec i{width:7px;height:7px;border-radius:50%;background:var(--rec);
+              box-shadow:0 0 8px var(--rec); animation:blink 1s infinite; display:block}
+
   .veil{
     position:absolute; inset:0; z-index:8; display:none; flex-direction:column; gap:9px;
-    align-items:center; justify-content:center; text-align:center; padding:24px;
+    align-items:center; justify-content:center; text-align:center; padding:18px;
     background:rgba(8,6,6,.88); backdrop-filter:blur(3px);
   }
   .veil.show{display:flex}
-  /* the detector being down does not stop the picture — stay see-through for that one */
   .veil.soft{background:rgba(8,6,6,.5); backdrop-filter:none}
   .veil.soft h2{color:var(--warn)}
-  .veil h2{margin:0; font-size:26px; letter-spacing:1.2px; color:var(--bad)}
-  .veil p{margin:0; color:var(--dim); font-size:13px; max-width:46ch; line-height:1.6}
-  .veil .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#9aa4b0}
+  .veil h2{margin:0; font-size:clamp(15px,2.2vw,26px); letter-spacing:1.2px; color:var(--bad)}
+  .veil p{margin:0; color:var(--dim); font-size:12.5px; max-width:46ch; line-height:1.55}
+  .veil .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:#9aa4b0}
 
   .unmute{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px;
     flex-direction:column; background:rgba(4,6,9,.35); cursor:pointer; z-index:6; backdrop-filter:blur(1px);
   }
   .unmute .btn-lg{
-    background:var(--accent); color:#04222f; font-weight:700; border:none; padding:14px 22px;
-    border-radius:999px; font-size:15px; box-shadow:var(--shadow); cursor:pointer;
+    background:var(--accent); color:#04222f; font-weight:700; border:none; padding:11px 18px;
+    border-radius:999px; font-size:14px; box-shadow:var(--shadow); cursor:pointer;
   }
-  .unmute small{color:#cfe6f2}
+  .unmute small{color:#cfe6f2; font-size:11.5px}
 
   .zbadge{
-    position:absolute; top:12px; left:12px; z-index:4; padding:4px 9px; border-radius:8px;
+    position:absolute; top:38px; left:12px; z-index:4; padding:4px 9px; border-radius:8px;
     background:rgba(10,13,17,.7); border:1px solid var(--line); color:var(--dim); font-size:12px;
     font-variant-numeric:tabular-nums; opacity:0; transition:opacity .2s; pointer-events:none;
   }
   .zbadge.show{opacity:1}
 
-  .controls{                     /* above the overlays, so they always work */
+  .controls{
     position:absolute; left:0; right:0; bottom:0; z-index:9;
-    display:flex; align-items:center; gap:8px; padding:12px 14px;
+    display:flex; align-items:center; gap:6px; padding:9px 10px;
     background:linear-gradient(0deg,rgba(9,11,14,.92),rgba(9,11,14,0)); flex-wrap:wrap;
+    opacity:0; transition:opacity .18s;
   }
-  .grp{display:flex; align-items:center; gap:6px; background:rgba(20,24,29,.8);
-       border:1px solid var(--line); border-radius:10px; padding:5px 6px; backdrop-filter:blur(6px)}
-  button.ico, .grp button{
+  /* On the wall the controls stay out of the way until you want them; in the focused
+     view they are permanent, because that is the view you actually operate. */
+  .tile:hover .controls, .tile:focus-within .controls, .tile.focus .controls{opacity:1}
+  .grp{display:flex; align-items:center; gap:4px; background:rgba(20,24,29,.82);
+       border:1px solid var(--line); border-radius:10px; padding:4px 5px; backdrop-filter:blur(6px)}
+  .grp button{
     appearance:none; border:none; background:transparent; color:var(--txt); cursor:pointer;
-    width:36px; height:34px; border-radius:8px; font-size:15px; display:inline-flex;
+    width:32px; height:30px; border-radius:8px; font-size:14px; display:inline-flex;
     align-items:center; justify-content:center; transition:background .15s,color .15s;
   }
+  .tile.focus .grp button{width:36px; height:34px; font-size:15px}
   .grp button:hover{background:var(--panel-2)}
   .grp button:active{transform:translateY(1px)}
   .grp button.on{color:var(--accent)}
-  /* A switch that is OFF has to look deliberately off, not merely unlit: these two
-     stop the detector producing clips and e-mails, so "is it armed?" must be readable
-     at a glance from across the room. */
+  /* A switch that is OFF has to look deliberately off, not merely unlit: these two stop
+     the detector producing clips and e-mails, so "is it armed?" must be readable at a
+     glance from across the room — and now it must be readable PER CAMERA. */
   .grp button.sw{position:relative}
   .grp button.sw:not(.on){color:var(--dim)}
-  .grp button.sw:not(.on)::after{content:""; position:absolute; left:6px; right:6px; top:50%;
+  .grp button.sw:not(.on)::after{content:""; position:absolute; left:5px; right:5px; top:50%;
     height:1.5px; background:#e0564d; transform:rotate(-20deg); border-radius:2px}
   .grp button:disabled{opacity:.35; cursor:not-allowed}
   .grp button:disabled:hover{background:transparent}
-  .grp label{color:var(--dim); font-size:11.5px; padding:0 4px}
-  input[type=range]{accent-color:var(--accent); width:84px}
-  .segbtn{padding:0 12px; width:auto; font-size:12.5px; color:var(--dim)}
+  .grp label{color:var(--dim); font-size:11px; padding:0 3px}
+  input[type=range]{accent-color:var(--accent); width:70px}
+  .segbtn{padding:0 10px; width:auto!important; font-size:12px; color:var(--dim)}
   .segbtn.on{color:var(--accent); background:var(--panel-2)}
-  .zlabel{min-width:44px; text-align:center; color:var(--dim); font-variant-numeric:tabular-nums; font-size:12.5px}
+  .zlabel{min-width:40px; text-align:center; color:var(--dim);
+          font-variant-numeric:tabular-nums; font-size:12px}
+  .only-focus{display:none}
+  .tile.focus .only-focus{display:flex}
 
+  /* ---- events ---- */
   aside{
-    width:302px; flex:none; border-left:1px solid var(--line); background:var(--panel);
-    overflow-y:auto; padding:12px;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+    overflow-y:auto; padding:11px; min-width:0; min-height:0;
   }
-  aside h3{margin:4px 0 10px; font-size:12px; letter-spacing:.4px; color:var(--dim); text-transform:uppercase}
+  aside h3{margin:2px 0 10px; font-size:12px; letter-spacing:.4px; color:var(--dim);
+           text-transform:uppercase; display:flex; align-items:center; gap:8px}
+  aside h3 .n{color:var(--accent); font-variant-numeric:tabular-nums}
   .ev{display:flex; gap:10px; padding:8px; border:1px solid var(--line); border-radius:10px;
       margin-bottom:8px; background:#0f1317}
-  .ev img{width:88px; height:50px; object-fit:cover; border-radius:6px; background:#000}
+  .ev img{width:88px; height:50px; object-fit:cover; border-radius:6px; background:#000; flex:none}
   .ev .nomedia{width:88px; height:50px; border-radius:6px; background:#000; flex:none;
     display:flex; align-items:center; justify-content:center; color:#5c646e; font-size:15px;
     border:1px dashed var(--line); position:relative}
@@ -138,402 +189,582 @@
   .ev .tag{font-weight:700}
   .ev .tag.RACCOON{color:#ffcf6a} .ev .tag.ANIMAL{color:#4cc2ff}
   .ev .tag.PERSON{color:#3ad29f} .ev .tag.TEST{color:#8b97a6}
+  .ev .cam{display:inline-block; font-size:10px; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:0 5px;
+    margin-left:6px; vertical-align:1px; font-weight:600}
   .ev .t{color:var(--dim); font-size:11px; overflow:hidden; text-overflow:ellipsis}
   .ev a{color:var(--accent); font-size:12px; text-decoration:none}
   .empty{color:var(--dim); font-size:12px; padding:8px; line-height:1.6}
 
+  .nocams{
+    display:flex; flex-direction:column; gap:10px; align-items:center; justify-content:center;
+    text-align:center; color:var(--dim); padding:30px; line-height:1.7;
+  }
+  .nocams h2{color:var(--txt); margin:0; font-size:19px}
+  .nocams code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:2px 6px}
+
   .toast{
-    position:absolute; left:50%; bottom:74px; transform:translateX(-50%) translateY(10px);
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(10px);
     background:var(--panel-2); border:1px solid var(--line); color:var(--txt);
     padding:9px 15px; border-radius:10px; font-size:13px; box-shadow:var(--shadow);
-    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:10; max-width:80vw;
+    opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:30; max-width:80vw;
   }
   .toast.show{opacity:1; transform:translateX(-50%)}
-  @media (max-width:760px){ aside{display:none} .camname{display:none} input[type=range]{width:60px} }
+
+  @media (max-width:900px){
+    main[data-n="1"], main[data-n="2"], main[data-n="3"]{
+      grid-template-columns:1fr; grid-template-rows:none; grid-auto-rows:minmax(190px,1fr);
+    }
+    aside{min-height:220px}
+    .camname{display:none}
+  }
 </style>
 </head>
 <body>
   <header>
     <span class="brand"><b>h32</b> monitor</span>
-    <span class="camname">Victure PC530 · AI detector</span>
-    <span class="rec" id="rec"><span class="dot"></span>RECORDING</span>
+    <span class="camname" id="wallname">—</span>
     <span class="spacer"></span>
-    <span class="pill"><span class="dot" id="dot"></span><span id="status">connecting…</span></span>
+    <span class="pill"><span class="dot" id="dot"></span><span id="status">starting…</span></span>
   </header>
 
-  <main>
-    <div class="left" id="left">
-      <div class="stage" id="stage">
-        <div class="zoomer" id="zoomer">
-          <video-stream id="cam"></video-stream>
-          <svg id="boxes" preserveAspectRatio="xMidYMid meet"></svg>
-        </div>
-      </div>
-
-      <div class="zbadge" id="zbadge">1.0×</div>
-
-      <div class="unmute" id="unmute">
-        <button class="btn-lg">🔊&nbsp; Tap for sound</button>
-        <small>video is live · click to enable audio</small>
-      </div>
-
-      <div class="veil" id="veil">
-        <h2 id="veilTitle">NO CAMERA SIGNAL</h2>
-        <p id="veilWhy">The detector is not receiving any video.</p>
-        <p class="mono" id="veilWhen"></p>
-        <p id="veilHint">Nothing is being detected and no events will fire until the feed returns.</p>
-      </div>
-
-      <div class="toast" id="toast"></div>
-
-      <div class="controls">
-        <div class="grp">
-          <button id="btnMute" class="ico" title="Mute / unmute (m)">🔇</button>
-          <input id="vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
-        </div>
-        <div class="grp">
-          <button id="zOut" title="Zoom out (-)">－</button>
-          <span class="zlabel" id="zlabel">1.0×</span>
-          <button id="zIn" title="Zoom in (+)">＋</button>
-          <button id="zReset" title="Reset view (0)">⤢</button>
-        </div>
-        <div class="grp" title="Digital pan (arrow keys when zoomed)">
-          <label>PAN</label>
-          <button data-pan="0,-1">▲</button>
-          <button data-pan="-1,0">◀</button>
-          <button data-pan="1,0">▶</button>
-          <button data-pan="0,1">▼</button>
-        </div>
-        <div class="spacer" style="flex:1"></div>
-        <div class="grp">
-          <button id="segMain" class="segbtn on">1080p</button>
-          <button id="segSub" class="segbtn">360p</button>
-        </div>
-        <div class="grp" title="What an event produces — detection itself never stops">
-          <button id="btnRec" class="ico sw on" title="Auto-record snapshot + clip on every event (r)">⏺</button>
-          <button id="btnMail" class="ico sw on" title="E-mail an alert on every event (e)">✉️</button>
-        </div>
-        <div class="grp">
-          <button id="btnBoxes" class="ico on" title="Show detection boxes (b)">🔲</button>
-          <button id="btnSnap" class="ico" title="Snapshot (s)">📷</button>
-          <button id="btnFull" class="ico" title="Fullscreen (f)">⛶</button>
-        </div>
-      </div>
-    </div>
-
-    <aside>
-      <h3>Recent events</h3>
-      <div id="events"><div class="empty">none yet — watching…</div></div>
-    </aside>
-  </main>
+  <main id="wall" data-n="0"></main>
+  <div class="toast" id="toast"></div>
 
 <script type="module">
 import './video-stream.js';
 
-// The detector's data feed. Same host, its own port (go2rtc serves this page).
-const API = `${location.protocol}//${location.hostname}:8090`;
+/* ────────────────────────────────────────────────────────────────────────────
+   The wall is built from web/cameras.json (who exists, what they are called,
+   which port their detector listens on) intersected with go2rtc's /api/streams
+   (which of them actually have a source configured). A camera still in its box
+   has a blank source in local.env, so it is simply not here — that is what makes
+   one, two and three cameras the same page rather than three layouts.
+   ──────────────────────────────────────────────────────────────────────────── */
 
-const cam = document.getElementById('cam');
-const stage = document.getElementById('stage');
-const zoomer = document.getElementById('zoomer');
-const svg = document.getElementById('boxes');
-const dot = document.getElementById('dot');
+const wall     = document.getElementById('wall');
+const toastEl  = document.getElementById('toast');
+const dotEl    = document.getElementById('dot');
 const statusEl = document.getElementById('status');
-const zbadge = document.getElementById('zbadge');
-const zlabel = document.getElementById('zlabel');
-const toastEl = document.getElementById('toast');
-const veil = document.getElementById('veil');
+const wsProto  = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsBase   = `${wsProto}//${location.host}/api/ws`;
 
-const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsBase = `${wsProto}//${location.host}/api/ws`;
-let current = 'camera';
-
-// ---- live stream ----
-cam.mode = 'webrtc,mse';
-cam.media = 'video,audio';
-cam.background = false;
-function connect(streamName){
-  current = streamName;
-  cam.src = `${wsBase}?src=${streamName}`;
-  setStatus('wait','connecting…');
-}
-connect(current);
-
-function setStatus(kind,text){
-  dot.className = 'dot ' + (kind==='live'?'live':kind==='err'?'err':'wait');
-  statusEl.textContent = text;
-}
-
-let videoEl = null;
-const findVideo = () => { videoEl = cam.querySelector('video'); return videoEl; };
-new MutationObserver(()=>{ if(findVideo()) hookVideo(); }).observe(cam,{childList:true,subtree:true});
-function hookVideo(){
-  if(!videoEl || videoEl._hooked) return;
-  videoEl._hooked = true;
-  videoEl.muted = true;
-  videoEl.addEventListener('playing', ()=>{ if(online!==false) setStatus('live','live'); layout(); });
-  videoEl.addEventListener('loadedmetadata', layout);
-  videoEl.addEventListener('waiting', ()=> setStatus('wait','buffering…'));
-  videoEl.addEventListener('stalled', ()=> setStatus('wait','stalled…'));
-  applyVol();
-}
-
-// ---- audio ----
-const unmute = document.getElementById('unmute');
-const btnMute = document.getElementById('btnMute');
-const vol = document.getElementById('vol');
-let muted = true;
-function applyVol(){
-  if(!videoEl) return;
-  videoEl.muted = muted;
-  videoEl.volume = parseFloat(vol.value);
-  btnMute.textContent = muted || videoEl.volume===0 ? '🔇' : '🔊';
-  btnMute.classList.toggle('on', !muted);
-}
-function setMuted(m){ muted = m; applyVol(); if(!m) unmute.style.display='none'; }
-unmute.addEventListener('click', ()=> setMuted(false));
-btnMute.addEventListener('click', ()=> setMuted(!muted));
-vol.addEventListener('input', ()=>{ if(parseFloat(vol.value)>0 && muted) muted=false;
-                                    unmute.style.display='none'; applyVol(); });
-
-// ---- digital zoom + pan ----
-let z = 1, panX = 0, panY = 0;
-const Z_MIN=1, Z_MAX=5, Z_STEP=0.25, PAN_STEP=0.18;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function apply(){
-  z = clamp(z, Z_MIN, Z_MAX);
-  if(z===1){ panX=panY=0; }
-  panX = clamp(panX,-1,1); panY = clamp(panY,-1,1);
-  const r = stage.getBoundingClientRect();
-  zoomer.style.transform =
-    `translate(${panX*(z-1)/2*r.width}px, ${panY*(z-1)/2*r.height}px) scale(${z})`;
-  const t = z.toFixed(2).replace(/0$/,'').replace(/\.$/,'') + '×';
-  zlabel.textContent = t; zbadge.textContent = t;
-  zbadge.classList.toggle('show', z>1);
-}
-function zoom(d){ z += d; apply(); }
-function pan(dx,dy){
-  if(z===1){ toast('Zoom in first to pan'); return; }
-  panX+=dx*PAN_STEP; panY+=dy*PAN_STEP; apply();
-}
-document.getElementById('zIn').onclick    = ()=> zoom(+Z_STEP);
-document.getElementById('zOut').onclick   = ()=> zoom(-Z_STEP);
-document.getElementById('zReset').onclick = ()=>{ z=1; panX=panY=0; apply(); };
-document.querySelectorAll('[data-pan]').forEach(b=>{
-  const [x,y]=b.dataset.pan.split(',').map(Number);
-  b.onclick=()=>pan(x,y);
-});
-stage.addEventListener('wheel', e=>{ e.preventDefault(); zoom(e.deltaY<0?+Z_STEP:-Z_STEP); },
-                       {passive:false});
-window.addEventListener('resize', ()=>{ apply(); layout(); });
-
-// ---- box overlay ----
-// The video is letterboxed inside its element by object-fit:contain. Give the SVG the
-// same viewBox as the source frame and the same letterboxing, and box coordinates from
-// the detector land exactly on the picture at any window size or zoom level.
-let showBoxes = true, srcW = 0, srcH = 0, boxes = [], faceBoxes = [];
-function layout(){
-  const w = srcW || (videoEl && videoEl.videoWidth) || 0;
-  const h = srcH || (videoEl && videoEl.videoHeight) || 0;
-  if(w && h) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-}
-function drawBoxes(){
-  if(!showBoxes || !svg.getAttribute('viewBox') || (!boxes.length && !faceBoxes.length)){
-    svg.innerHTML=''; return;
-  }
-  const fs = Math.max(12, Math.round((srcW || 1920) / 64));   // label size in frame units
-  const parts = boxes.map(b=>{
-    const [x1,y1,x2,y2] = b.box;
-    const kind = b.scenery ? 'scenery' : b.cls;
-    const label = b.scenery ? `${b.cls} ${b.conf} · scenery` : `${b.cls} ${b.conf}`;
-    return `<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="3"/>`
-         + `<text class="t-${kind}" font-size="${b.scenery?fs*0.8:fs}" x="${x1+3}" y="${Math.max(fs,y1-fs*0.35)}">${label}</text>`;
-  });
-  for(const f of faceBoxes){
-    const [x1,y1,x2,y2] = f.box;
-    const kind = f.who ? 'face' : 'face-unknown';
-    parts.push(`<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="2"/>`
-      + `<text class="t-${kind}" font-size="${fs*0.8}" x="${x1}" y="${Math.max(fs,y1-fs*0.3)}">${f.who||'?'} ${f.score}</text>`);
-  }
-  svg.innerHTML = parts.join('');
-}
-const btnBoxes = document.getElementById('btnBoxes');
-btnBoxes.onclick = ()=>{
-  showBoxes = !showBoxes;
-  btnBoxes.classList.toggle('on', showBoxes);
-  drawBoxes();
-  toast(showBoxes ? 'Detection boxes on' : 'Detection boxes off');
-};
-
-// ---- detector feed ----
-let online = null;
-async function poll(){
-  let d;
-  try{
-    d = await (await fetch(`${API}/state.json`,{cache:'no-store'})).json();
-  }catch(e){
-    online = null;
-    setStatus('err','detector offline');
-    showVeil('DETECTOR NOT RUNNING',
-             'The camera stream is still live, but nothing is watching it for animals.',
-             'h32 detect', 'No snapshots, clips or alerts are being produced.', true);
-    boxes = []; faceBoxes = []; drawBoxes();
-    return;
-  }
-  online = !!d.online;
-  srcW = d.frame_w || srcW; srcH = d.frame_h || srcH;
-  layout();
-  boxes = d.boxes || []; faceBoxes = d.faces || []; drawBoxes();
-  document.getElementById('rec').classList.toggle('on', !!d.recording);
-  renderSwitches(d);
-
-  if(online){
-    hideVeil();
-    setStatus(videoEl && !videoEl.paused ? 'live' : 'wait', d.status || 'live');
-  }else{
-    setStatus('err','no camera signal');
-    showVeil('NO CAMERA SIGNAL',
-             d.signal || 'The detector is not receiving any video from the camera.',
-             d.last_frame ? `last frame ${new Date(d.last_frame*1000).toLocaleTimeString()}`
-                          + `  ·  ${Math.round(Date.now()/1000 - d.last_frame)}s ago`
-                          : 'no video has arrived since the detector started',
-             'Nothing is being detected and no events will fire until the feed returns.');
-  }
-  renderEvents(d.events || []);
-}
-// ---- the two detector switches ----
-// State lives in the detector, not the page: two browsers looking at the same camera
-// must not disagree about whether it is recording, and a reload must not silently
-// re-arm e-mail. So the buttons only ever RENDER what /state.json reports, and clicking
-// asks the detector to change it. Nothing is toggled optimistically.
-const btnRec = document.getElementById('btnRec');
-const btnMail = document.getElementById('btnMail');
-
-function renderSwitches(d){
-  btnRec.classList.toggle('on', d.auto_record !== false);
-  const mailOk = d.email_available !== false;
-  btnMail.disabled = !mailOk;
-  btnMail.classList.toggle('on', mailOk && d.email_alerts !== false);
-  btnMail.title = mailOk
-    ? `E-mail an alert on every event — currently ${d.email_alerts !== false ? 'ON' : 'OFF'} (e)`
-    : 'E-mail is not configured (detector/secrets.json + H32_EMAIL_TO)';
-  btnRec.title = `Auto-record snapshot + clip on every event — currently `
-               + `${d.auto_record !== false ? 'ON' : 'OFF'} (r)`;
-}
-
-async function setSwitch(key, on){
-  try{
-    const s = await (await fetch(`${API}/set?${key}=${on?1:0}`,{cache:'no-store'})).json();
-    renderSwitches(s);
-    toast(key === 'record'
-      ? (s.auto_record ? 'recording snapshots + clips' : 'media recording OFF — events still logged')
-      : (s.email_alerts ? 'e-mail alerts on' : 'e-mail alerts OFF'));
-  }catch(e){
-    toast('detector offline — switch not applied');
-  }
-}
-btnRec.onclick  = ()=> setSwitch('record', !btnRec.classList.contains('on'));
-btnMail.onclick = ()=>{ if(!btnMail.disabled) setSwitch('email', !btnMail.classList.contains('on')); };
-
-function showVeil(title, why, when, hint, soft=false){
-  document.getElementById('veilTitle').textContent = title;
-  document.getElementById('veilWhy').textContent = why;
-  document.getElementById('veilWhen').textContent = when;
-  document.getElementById('veilHint').textContent = hint;
-  veil.classList.toggle('soft', soft);
-  veil.classList.add('show');
-}
-function hideVeil(){ veil.classList.remove('show'); }
-
-function renderEvents(list){
-  const box = document.getElementById('events');
-  if(!list.length){ box.innerHTML='<div class="empty">none yet — watching…</div>'; return; }
-  // e.snapshot is null when media recording was switched off: the detection still
-  // happened and is still listed, there is just no file to show for it.
-  box.innerHTML = list.map(e=>`<div class="ev">
-    ${e.snapshot
-      ? `<img src="${API}/file/${e.snapshot}" onerror="this.style.visibility='hidden'">`
-      : `<div class="nomedia" title="media recording was off">⏺</div>`}
-    <div class="m"><div class="tag ${e.tag}">${e.tag}${
-      e.who!==undefined && e.tag==='PERSON'
-        ? ` <span class="who${e.who?'':' unknown'}">${e.who||'unknown'}</span>` : ''}</div>
-    <div class="t">${e.time} · ${e.detail||''}</div>
-    ${e.clip?`<a href="${API}/file/${e.clip}" target="_blank">▶ clip</a>`
-            :(e.snapshot?'':'<span class="t">not recorded</span>')}</div></div>`).join('');
-}
-poll(); setInterval(poll, 1000);
-
-// ---- snapshot ----
-// Draws the video frame, then the same boxes on top, so the saved PNG matches the screen.
-function snapshot(){
-  const v = findVideo();
-  if(!v || !v.videoWidth){ toast('No frame yet'); return; }
-  const c = document.createElement('canvas');
-  c.width = v.videoWidth; c.height = v.videoHeight;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(v,0,0);
-  if(showBoxes){
-    ctx.lineWidth = 3; ctx.font = '600 20px system-ui, sans-serif';
-    for(const b of boxes){
-      const [x1,y1,x2,y2] = b.box;
-      const col = b.scenery ? '#6e7681'
-                : b.cls==='animal' ? '#ff5050' : b.cls==='person' ? '#3cb4d2' : '#9aa4b0';
-      ctx.strokeStyle = col; ctx.fillStyle = col;
-      ctx.setLineDash(b.scenery ? [7,5] : []);
-      ctx.strokeRect(x1, y1, x2-x1, y2-y1);
-      ctx.fillText(`${b.cls} ${b.conf}${b.scenery?' · scenery':''}`, x1+3, Math.max(18,y1-7));
-    }
-  }
-  c.toBlob(b=>{
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b);
-    a.download = `h32-monitor-${new Date().toISOString().replace(/[:T]/g,'-').slice(0,19)}.png`;
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
-    toast('📷 Snapshot saved');
-  },'image/png');
-}
-document.getElementById('btnSnap').onclick = snapshot;
-
-// ---- fullscreen / stream switch ----
-document.getElementById('btnFull').onclick = ()=>{
-  if(document.fullscreenElement) document.exitFullscreen();
-  else document.getElementById('left').requestFullscreen?.();
-};
-const segMain=document.getElementById('segMain'), segSub=document.getElementById('segSub');
-segMain.onclick=()=>{ if(current==='camera')return;
-  segMain.classList.add('on'); segSub.classList.remove('on'); connect('camera'); };
-segSub.onclick =()=>{ if(current==='camera_sub')return;
-  segSub.classList.add('on'); segMain.classList.remove('on'); connect('camera_sub'); };
-
-// ---- toast ----
 let toastT;
 function toast(msg){
-  toastEl.textContent=msg; toastEl.classList.add('show');
-  clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1900);
+  toastEl.textContent = msg; toastEl.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>toastEl.classList.remove('show'), 1900);
+}
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ── one camera ─────────────────────────────────────────────────────────── */
+class Tile {
+  constructor(cam){
+    Object.assign(this, cam);                     // id, name, short, kit, monitor_port
+    this.api      = `${location.protocol}//${location.hostname}:${cam.monitor_port}`;
+    this.focused  = false;
+    this.muted    = true;
+    this.showBoxes= true;
+    // Which stream this tile plays on the wall. Per camera, because it decides how many
+    // concurrent RTSP sessions the CAMERA is asked for, not just picture quality —
+    // go2rtc opens one connection per stream name and fans it out, so a tile on 'sub'
+    // costs a second session. See _comment_tile_stream in cameras.json.
+    this.wallQuality = (cam.tile_stream === 'main') ? 'main' : 'sub';
+    this.quality  = this.wallQuality;
+    this.z = 1; this.panX = 0; this.panY = 0;
+    this.srcW = 0; this.srcH = 0;
+    this.boxes = []; this.faceBoxes = []; this.events = [];
+    this.online = null;
+    this.el = this.render();
+    this.hook();
+    this.connect();
+    this.poll();
+    this.timer = setInterval(()=>this.poll(), 1000);
+  }
+
+  render(){
+    const el = document.createElement('div');
+    el.className = 'tile';
+    el.tabIndex = 0;
+    el.innerHTML = `
+      <div class="stage">
+        <div class="zoomer">
+          <video-stream></video-stream>
+          <svg class="boxes" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </div>
+      <div class="cap">
+        <span class="dot"></span>
+        <span class="nm">${esc(this.name)}</span>
+        <span class="kit">${esc(this.kit || '')}</span>
+        <span class="spacer"></span>
+        <span class="link" title="Link to the camera"></span>
+        <span class="rec"><i></i>REC</span>
+      </div>
+      <div class="zbadge">1.0×</div>
+      <div class="unmute">
+        <button class="btn-lg">🔊&nbsp; Tap for sound</button>
+        <small>click to enable audio</small>
+      </div>
+      <div class="veil">
+        <h2>NO CAMERA SIGNAL</h2>
+        <p class="why">The detector is not receiving any video.</p>
+        <p class="mono when"></p>
+        <p class="hint"></p>
+      </div>
+      <div class="controls">
+        <div class="grp">
+          <button class="b-mute" title="Mute / unmute (m)">🔇</button>
+          <input class="b-vol only-focus" type="range" min="0" max="1" step="0.01" value="1" title="Volume">
+        </div>
+        <div class="grp only-focus">
+          <button class="b-zout" title="Zoom out (-)">－</button>
+          <span class="zlabel">1.0×</span>
+          <button class="b-zin" title="Zoom in (+)">＋</button>
+          <button class="b-zreset" title="Reset view (0)">⤢</button>
+        </div>
+        <div class="grp only-focus" title="Digital pan (arrow keys when zoomed)">
+          <label>PAN</label>
+          <button data-pan="0,-1">▲</button><button data-pan="-1,0">◀</button>
+          <button data-pan="1,0">▶</button><button data-pan="0,1">▼</button>
+        </div>
+        <span class="spacer" style="flex:1"></span>
+        <div class="grp only-focus">
+          <button class="b-main segbtn">full</button>
+          <button class="b-sub segbtn on">low</button>
+        </div>
+        <div class="grp" title="What an event produces — detection itself never stops">
+          <button class="b-rec sw on" title="Auto-record snapshot + clip (r)">⏺</button>
+          <button class="b-mail sw on" title="E-mail an alert (e)">✉️</button>
+        </div>
+        <div class="grp">
+          <button class="b-boxes on" title="Show detection boxes (b)">🔲</button>
+          <button class="b-snap" title="Snapshot (s)">📷</button>
+          <button class="b-expand" title="Expand / collapse this camera">⛶</button>
+        </div>
+      </div>`;
+    return el;
+  }
+
+  q(sel){ return this.el.querySelector(sel); }
+
+  hook(){
+    const cam = this.q('video-stream');
+    cam.mode = 'webrtc,mse';          // H.265 cannot go over WebRTC; the player falls
+    cam.media = 'video,audio';        // back to MSE by itself for the Vimtags
+    cam.background = false;
+    this.cam = cam;
+    new MutationObserver(()=>this.hookVideo()).observe(cam,{childList:true,subtree:true});
+
+    this.q('.unmute').onclick = ()=> this.setMuted(false);
+    this.q('.b-mute').onclick = e => { e.stopPropagation(); this.setMuted(!this.muted); };
+    this.q('.b-vol').oninput  = e => {
+      e.stopPropagation();
+      if(parseFloat(e.target.value) > 0 && this.muted) this.muted = false;
+      this.q('.unmute').style.display = 'none'; this.applyVol();
+    };
+    this.q('.b-zin').onclick    = e => { e.stopPropagation(); this.zoom(+0.25); };
+    this.q('.b-zout').onclick   = e => { e.stopPropagation(); this.zoom(-0.25); };
+    this.q('.b-zreset').onclick = e => { e.stopPropagation(); this.z=1; this.panX=this.panY=0; this.apply(); };
+    this.el.querySelectorAll('[data-pan]').forEach(b=>{
+      const [x,y] = b.dataset.pan.split(',').map(Number);
+      b.onclick = e => { e.stopPropagation(); this.pan(x,y); };
+    });
+    this.q('.stage').addEventListener('wheel', e=>{
+      if(!this.focused) return;                 // the wall scrolls, the focused view zooms
+      e.preventDefault(); this.zoom(e.deltaY < 0 ? +0.25 : -0.25);
+    }, {passive:false});
+
+    this.q('.b-main').onclick = e => { e.stopPropagation(); this.setQuality('main'); };
+    this.q('.b-sub').onclick  = e => { e.stopPropagation(); this.setQuality('sub'); };
+    this.q('.b-boxes').onclick= e => {
+      e.stopPropagation(); this.showBoxes = !this.showBoxes;
+      this.q('.b-boxes').classList.toggle('on', this.showBoxes); this.drawBoxes();
+      toast(`${this.short}: boxes ${this.showBoxes ? 'on' : 'off'}`);
+    };
+    this.q('.b-snap').onclick  = e => { e.stopPropagation(); this.snapshot(); };
+    this.q('.b-expand').onclick= e => { e.stopPropagation(); focusTile(this.focused ? null : this); };
+    this.q('.b-rec').onclick   = e => {
+      e.stopPropagation(); this.setSwitch('record', !this.q('.b-rec').classList.contains('on'));
+    };
+    this.q('.b-mail').onclick  = e => {
+      e.stopPropagation();
+      if(!this.q('.b-mail').disabled)
+        this.setSwitch('email', !this.q('.b-mail').classList.contains('on'));
+    };
+    // Clicking the picture itself focuses — the whole point of a wall is to get closer.
+    this.q('.stage').onclick = ()=>{ if(!this.focused) focusTile(this); };
+  }
+
+  hookVideo(){
+    const v = this.cam.querySelector('video');
+    if(!v || v._hooked) return;
+    this.video = v; v._hooked = true; v.muted = true;
+    v.addEventListener('playing', ()=>{ if(this.online !== false) this.setDot('live'); this.layout(); });
+    v.addEventListener('loadedmetadata', ()=>this.layout());
+    v.addEventListener('waiting', ()=>this.setDot('wait'));
+    this.applyVol();
+  }
+
+  connect(){
+    const src = this.quality === 'main' ? this.id : `${this.id}_sub`;
+    this.cam.src = `${wsBase}?src=${encodeURIComponent(src)}`;
+    this.setDot('wait');
+  }
+  setQuality(qy){
+    if(this.quality === qy) return;
+    this.quality = qy;
+    this.q('.b-main').classList.toggle('on', qy === 'main');
+    this.q('.b-sub').classList.toggle('on',  qy === 'sub');
+    this.connect();
+  }
+
+  setDot(kind){
+    this.q('.cap .dot').className = 'dot ' + (kind==='live'?'live':kind==='err'?'err':'wait');
+  }
+
+  setMuted(m){
+    // Only one camera can be audible at a time — three unmuted tiles is just noise.
+    if(!m) tiles.forEach(t=>{ if(t !== this) t.silence(); });
+    this.muted = m; this.applyVol();
+    if(!m) this.q('.unmute').style.display = 'none';
+  }
+  silence(){ this.muted = true; this.applyVol(); }
+  applyVol(){
+    if(!this.video) return;
+    this.video.muted = this.muted;
+    this.video.volume = parseFloat(this.q('.b-vol').value);
+    this.q('.b-mute').textContent = (this.muted || this.video.volume === 0) ? '🔇' : '🔊';
+    this.q('.b-mute').classList.toggle('on', !this.muted);
+  }
+
+  /* ---- digital zoom + pan (focused view only) ---- */
+  apply(){
+    this.z = clamp(this.z, 1, 5);
+    if(this.z === 1){ this.panX = this.panY = 0; }
+    this.panX = clamp(this.panX,-1,1); this.panY = clamp(this.panY,-1,1);
+    const r = this.q('.stage').getBoundingClientRect();
+    this.q('.zoomer').style.transform =
+      `translate(${this.panX*(this.z-1)/2*r.width}px, ${this.panY*(this.z-1)/2*r.height}px) scale(${this.z})`;
+    const t = this.z.toFixed(2).replace(/0$/,'').replace(/\.$/,'') + '×';
+    this.q('.zlabel').textContent = t;
+    const zb = this.q('.zbadge'); zb.textContent = t; zb.classList.toggle('show', this.z > 1);
+  }
+  zoom(d){ this.z += d; this.apply(); }
+  pan(dx,dy){
+    if(this.z === 1){ toast('Zoom in first to pan'); return; }
+    this.panX += dx*0.18; this.panY += dy*0.18; this.apply();
+  }
+
+  /* ---- boxes ---- */
+  layout(){
+    const w = this.srcW || (this.video && this.video.videoWidth) || 0;
+    const h = this.srcH || (this.video && this.video.videoHeight) || 0;
+    if(w && h) this.q('.boxes').setAttribute('viewBox', `0 0 ${w} ${h}`);
+  }
+  drawBoxes(){
+    const svg = this.q('.boxes');
+    if(!this.showBoxes || !svg.getAttribute('viewBox') ||
+       (!this.boxes.length && !this.faceBoxes.length)){ svg.innerHTML = ''; return; }
+    // Label size is in FRAME units, so it stays readable whether the source is the
+    // Victure's 1920 or a Vimtag's 2560, and whether the tile is a quarter or the wall.
+    const fs = Math.max(12, Math.round((this.srcW || 1920) / 64));
+    const parts = this.boxes.map(b=>{
+      const [x1,y1,x2,y2] = b.box;
+      const kind = b.scenery ? 'scenery' : b.cls;
+      const label = b.scenery ? `${b.cls} ${b.conf} · scenery` : `${b.cls} ${b.conf}`;
+      return `<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="3"/>`
+           + `<text class="t-${kind}" font-size="${b.scenery?fs*0.8:fs}" x="${x1+3}" y="${Math.max(fs,y1-fs*0.35)}">${esc(label)}</text>`;
+    });
+    for(const f of this.faceBoxes){
+      const [x1,y1,x2,y2] = f.box;
+      const kind = f.who ? 'face' : 'face-unknown';
+      parts.push(`<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="2"/>`
+        + `<text class="t-${kind}" font-size="${fs*0.8}" x="${x1}" y="${Math.max(fs,y1-fs*0.3)}">${esc(f.who||'?')} ${f.score}</text>`);
+    }
+    svg.innerHTML = parts.join('');
+  }
+
+  /* ---- detector feed ---- */
+  async poll(){
+    let d;
+    try{
+      d = await (await fetch(`${this.api}/state.json`, {cache:'no-store'})).json();
+    }catch(e){
+      this.online = null; this.events = [];
+      this.setDot('err');
+      this.veil('DETECTOR NOT RUNNING',
+                'The picture is live, but nothing is watching this camera.',
+                `h32 detect ${this.id}`, '', true);
+      this.boxes = []; this.faceBoxes = []; this.drawBoxes();
+      renderEvents(); return;
+    }
+    // A crossed port would draw one camera's boxes over another's video — louder to
+    // refuse than to quietly mislead.
+    if(d.camera && d.camera !== this.id){
+      this.setDot('err');
+      this.veil('WRONG DETECTOR',
+                `Port ${this.monitor_port} is answering for "${d.camera}", not "${this.id}".`,
+                'check monitor_port in web/cameras.json', '');
+      return;
+    }
+    this.online = !!d.online;
+    this.srcW = d.frame_w || this.srcW; this.srcH = d.frame_h || this.srcH;
+    this.layout();
+    this.boxes = d.boxes || []; this.faceBoxes = d.faces || []; this.drawBoxes();
+    this.q('.cap .rec').classList.toggle('on', !!d.recording);
+    this.renderSwitches(d);
+    this.renderLink(d.link);
+    this.events = (d.events || []).map(e => ({...e, _cam: this}));
+
+    if(this.online){
+      this.hideVeil();
+      this.setDot(this.video && !this.video.paused ? 'live' : 'wait');
+    }else{
+      this.setDot('err');
+      // Two very different faults look identical here, and the fix differs completely:
+      // if the camera is off the LAN it is a radio/power problem, if it answers pings
+      // but sends no video it is the stream. Say which one it is.
+      const L = d.link || {};
+      const offLan = L.quality === 'down';
+      this.veil(offLan ? 'CAMERA OFF THE NETWORK' : 'NO CAMERA SIGNAL',
+        offLan
+          ? `${L.host} is not answering pings — the camera itself has dropped off the `
+            + `network, so this is power or wifi, not the video stream.`
+          : (d.signal || 'The detector is not receiving any video from this camera.'),
+        offLan
+          ? (L.down_secs != null ? `down ${L.down_secs}s · ${L.dropouts} dropout(s) this run` : '')
+          : (d.last_frame ? `last frame ${new Date(d.last_frame*1000).toLocaleTimeString()}`
+                          + ` · ${Math.round(Date.now()/1000 - d.last_frame)}s ago`
+                          : 'no video since the detector started'),
+        offLan
+          ? 'Check power and wifi range. Nothing can be detected until it is back.'
+          : 'The camera answers on the network, so this is the stream, not the radio.');
+    }
+    renderEvents();
+  }
+
+  renderLink(L){
+    const el = this.q('.cap .link');
+    if(!L || L.quality === 'unknown'){ el.classList.remove('show'); return; }
+    el.className = `link show ${L.quality}`;
+    // Round-trip time, not signal bars — see link.py for why there is no RSSI to show.
+    const body = L.quality === 'down'
+      ? (L.down_secs != null ? `down ${L.down_secs}s` : 'down')
+      : `${L.rtt_ms}ms${L.loss_pct ? ` · ${L.loss_pct}% loss` : ''}`;
+    el.innerHTML = `<i></i>${esc(body)}`;
+    el.title = L.quality === 'down'
+      ? `${L.host} is not answering pings. ${L.dropouts} dropout(s) since this detector started.`
+      : `Link to ${L.host}: ${L.quality} — ${L.rtt_ms}ms round trip, ${L.loss_pct}% packet `
+        + `loss over the last ${L.samples} probes, ${L.dropouts} dropout(s) this run.\n`
+        + `This is reachability measured from here; the camera reports no wifi signal strength.`;
+  }
+
+  renderSwitches(d){
+    const rec = this.q('.b-rec'), mail = this.q('.b-mail');
+    rec.classList.toggle('on', d.auto_record !== false);
+    const mailOk = d.email_available !== false;
+    mail.disabled = !mailOk;
+    mail.classList.toggle('on', mailOk && d.email_alerts !== false);
+    rec.title  = `${this.short}: auto-record — currently ${d.auto_record !== false ? 'ON':'OFF'} (r)`;
+    mail.title = mailOk
+      ? `${this.short}: e-mail alerts — currently ${d.email_alerts !== false ? 'ON':'OFF'} (e)`
+      : 'E-mail is not configured (detector/secrets.json + H32_EMAIL_TO)';
+  }
+
+  async setSwitch(key, on){
+    try{
+      const s = await (await fetch(`${this.api}/set?${key}=${on?1:0}`, {cache:'no-store'})).json();
+      this.renderSwitches(s);
+      toast(`${this.short}: ` + (key === 'record'
+        ? (s.auto_record ? 'recording snapshots + clips' : 'media recording OFF — events still logged')
+        : (s.email_alerts ? 'e-mail alerts on' : 'e-mail alerts OFF')));
+    }catch(e){ toast(`${this.short}: detector offline — switch not applied`); }
+  }
+
+  veil(title, why, when, hint, soft=false){
+    const v = this.q('.veil');
+    v.querySelector('h2').textContent = title;
+    v.querySelector('.why').textContent = why;
+    v.querySelector('.when').textContent = when;
+    v.querySelector('.hint').textContent = hint;
+    v.classList.toggle('soft', soft); v.classList.add('show');
+  }
+  hideVeil(){ this.q('.veil').classList.remove('show'); }
+
+  snapshot(){
+    const v = this.video;
+    if(!v || !v.videoWidth){ toast(`${this.short}: no frame yet`); return; }
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(v,0,0);
+    if(this.showBoxes){
+      // The saved PNG has to match what is on screen, boxes included — a snapshot that
+      // silently drops them is useless as evidence of what the detector actually saw.
+      const sx = c.width / (this.srcW || c.width), sy = c.height / (this.srcH || c.height);
+      ctx.lineWidth = 3; ctx.font = '600 20px system-ui, sans-serif';
+      for(const b of this.boxes){
+        const [x1,y1,x2,y2] = b.box;
+        const col = b.scenery ? '#6e7681'
+                  : b.cls==='animal' ? '#ff5050' : b.cls==='person' ? '#3cb4d2' : '#9aa4b0';
+        ctx.strokeStyle = col; ctx.fillStyle = col;
+        ctx.setLineDash(b.scenery ? [7,5] : []);
+        ctx.strokeRect(x1*sx, y1*sy, (x2-x1)*sx, (y2-y1)*sy);
+        ctx.fillText(`${b.cls} ${b.conf}${b.scenery?' · scenery':''}`, x1*sx+3, Math.max(18,y1*sy-7));
+      }
+    }
+    c.toBlob(b=>{
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      const stamp = new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
+      a.download = `h32-${this.id}-${stamp}.png`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+      toast(`📷 ${this.short}: snapshot saved`);
+    }, 'image/png');
+  }
 }
 
-// ---- keyboard (same bindings as the plain viewer) ----
+/* ── the wall ───────────────────────────────────────────────────────────── */
+let tiles = [];
+let focused = null;
+const aside = document.createElement('aside');
+aside.innerHTML = `<h3>Recent events <span class="n"></span></h3>
+                   <div class="list"><div class="empty">none yet — watching…</div></div>`;
+
+function focusTile(t){
+  focused = t;
+  tiles.forEach(x => x.el.classList.toggle('focus', x === t));
+  wall.classList.toggle('focused', !!t);
+  if(t){
+    // The wall runs the light stream; a camera you are actually looking at gets the
+    // full one. Three simultaneous full-resolution decodes is work the wall does not
+    // need, and a quarter-screen tile cannot show the detail anyway.
+    t.setQuality('main');
+    statusEl.textContent = t.name;
+  }else{
+    tiles.forEach(x=>{ x.setQuality(x.wallQuality); x.z = 1; x.panX = x.panY = 0; x.apply(); });
+    statusEl.textContent = `${tiles.length} camera${tiles.length===1?'':'s'}`;
+  }
+  tiles.forEach(x=>x.apply());
+}
+
+function renderEvents(){
+  const list = aside.querySelector('.list');
+  // One timeline across every camera, newest first. Sorted on the epoch the detector
+  // stamps, not the HH:MM:SS label, so the order survives midnight.
+  const all = tiles.flatMap(t => t.events)
+                   .sort((a,b)=> (b.t || 0) - (a.t || 0))
+                   .slice(0, 40);
+  aside.querySelector('.n').textContent = all.length ? `· ${all.length}` : '';
+  if(!all.length){
+    list.innerHTML = tiles.length
+      ? '<div class="empty">none yet — watching…</div>'
+      : '<div class="empty">no cameras configured</div>';
+    return;
+  }
+  list.innerHTML = all.map(e=>{
+    const api = e._cam.api;
+    return `<div class="ev">
+      ${e.snapshot
+        ? `<img src="${api}/file/${encodeURIComponent(e.snapshot)}" onerror="this.style.visibility='hidden'">`
+        : `<div class="nomedia" title="media recording was off">⏺</div>`}
+      <div class="m">
+        <div class="tag ${esc(e.tag)}">${esc(e.tag)}${
+          e.who !== undefined && e.tag === 'PERSON'
+            ? ` <span class="who${e.who?'':' unknown'}">${esc(e.who||'unknown')}</span>` : ''}
+          <span class="cam">${esc(e._cam.short)}</span></div>
+        <div class="t">${esc(e.time)} · ${esc(e.detail||'')}</div>
+        ${e.clip ? `<a href="${api}/file/${encodeURIComponent(e.clip)}" target="_blank">▶ clip</a>`
+                 : (e.snapshot ? '' : '<span class="t">not recorded</span>')}
+      </div></div>`;
+  }).join('');
+}
+
+async function build(){
+  let registry = [], streams = {};
+  try{
+    [registry, streams] = await Promise.all([
+      fetch('cameras.json', {cache:'no-store'}).then(r=>r.json()).then(j=>j.cameras||[]),
+      fetch('/api/streams',  {cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+    ]);
+  }catch(e){
+    wall.innerHTML = `<div class="nocams"><h2>Cannot read the camera registry</h2>
+      <p>web/cameras.json did not load. Is go2rtc serving <code>web/</code>?</p></div>`;
+    return;
+  }
+  // A camera counts as present when go2rtc has a real source for it. An unconfigured
+  // one is left as an empty string (or an unexpanded ${…} literal), and must not
+  // become a permanently dead tile.
+  const live = registry.filter(c=>{
+    const s = streams[c.id];
+    if(!s) return false;
+    const u = (s.producers || []).map(p=>p.url || '');
+    return u.length > 0 && u.some(x => x && !x.startsWith('${'));
+  });
+
+  if(!live.length){
+    wall.dataset.n = '0';
+    wall.innerHTML = `<div class="nocams">
+      <h2>No cameras configured</h2>
+      <p>Add a camera URL to <code>local.env</code> — one line per stream:<br>
+         <code>H32_CAM_WEST="rtsp://…"</code> or <code>H32_CAM_GATE="onvif://…"</code><br>
+         then <code>h32 restart</code>.</p>
+      <p>Registry: <code>web/cameras.json</code> · known ids:
+         ${registry.map(c=>`<code>${esc(c.id)}</code>`).join(' ') || '(none)'}</p></div>`;
+    document.getElementById('wallname').textContent = '';
+    statusEl.textContent = 'no cameras'; dotEl.className = 'dot err';
+    return;
+  }
+
+  tiles = live.map(c => new Tile(c));
+  wall.innerHTML = '';
+  tiles.forEach(t => wall.appendChild(t.el));
+  wall.appendChild(aside);
+  wall.dataset.n = String(Math.min(tiles.length, 3));
+  document.getElementById('wallname').textContent =
+    tiles.map(t=>t.short).join(' · ');
+  statusEl.textContent = `${tiles.length} camera${tiles.length===1?'':'s'}`;
+  dotEl.className = 'dot live';
+  renderEvents();
+  tiles.forEach(t=>t.apply());
+}
+
+window.addEventListener('resize', ()=> tiles.forEach(t=>t.apply()));
+
+/* Keyboard acts on the focused camera, or on the only one there is. */
+function target(){ return focused || (tiles.length === 1 ? tiles[0] : null); }
 window.addEventListener('keydown', e=>{
-  if(e.target.tagName==='INPUT') return;
+  if(e.target.tagName === 'INPUT') return;
+  if(e.key === 'Escape'){ if(focused) focusTile(null); return; }
+  // 1/2/3 jump straight to a camera — the fastest way to get a closer look.
+  if(/^[1-9]$/.test(e.key)){
+    const t = tiles[Number(e.key)-1];
+    if(t){ focusTile(focused === t ? null : t); return; }
+  }
+  const t = target();
+  if(!t) return;
   switch(e.key){
-    case 'ArrowUp':    pan(0,-1); e.preventDefault(); break;
-    case 'ArrowDown':  pan(0, 1); e.preventDefault(); break;
-    case 'ArrowLeft':  pan(-1,0); e.preventDefault(); break;
-    case 'ArrowRight': pan( 1,0); e.preventDefault(); break;
-    case '+': case '=': zoom(+Z_STEP); break;
-    case '-': case '_': zoom(-Z_STEP); break;
-    case '0': z=1; panX=panY=0; apply(); break;
-    case 'f': document.getElementById('btnFull').click(); break;
-    case 'b': btnBoxes.click(); break;
-    case 'm': setMuted(!muted); break;
-    case 's': snapshot(); break;
-    case 'r': btnRec.click(); break;
-    case 'e': btnMail.click(); break;
+    case 'ArrowUp':    t.pan(0,-1); e.preventDefault(); break;
+    case 'ArrowDown':  t.pan(0, 1); e.preventDefault(); break;
+    case 'ArrowLeft':  t.pan(-1,0); e.preventDefault(); break;
+    case 'ArrowRight': t.pan( 1,0); e.preventDefault(); break;
+    case '+': case '=': t.zoom(+0.25); break;
+    case '-': case '_': t.zoom(-0.25); break;
+    case '0': t.z = 1; t.panX = t.panY = 0; t.apply(); break;
+    case 'f': (t.focused ? document.exitFullscreen?.() : t.el.requestFullscreen?.()); break;
+    case 'b': t.q('.b-boxes').click(); break;
+    case 'm': t.setMuted(!t.muted); break;
+    case 's': t.snapshot(); break;
+    case 'r': t.q('.b-rec').click(); break;
+    case 'e': t.q('.b-mail').click(); break;
   }
 });
 
-apply();
+build();
 </script>
 </body>
 </html>
