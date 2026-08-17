@@ -105,7 +105,21 @@ m = LinkMonitor("10.0.0.9", pinger=scripted([5.0]))
 check("unknown, not down", m.status()["quality"] == "unknown", m.status()["quality"])
 check("up is None, not False", m.status()["up"] is None)
 
-print("\n8. a failing pinger must never take detection down")
+print("\n8. reconnect backoff — do not machine-gun a camera that has fallen over")
+from link import reconnect_delay
+check("a brief stall does not reconnect at all", reconnect_delay(1) == 0.0)
+check("…nor at 14 failed reads", reconnect_delay(14) == 0.0)
+check("first reconnect once the stall is real", reconnect_delay(15) > 0)
+d15, d30, d60 = reconnect_delay(15), reconnect_delay(30), reconnect_delay(60)
+check("the wait grows with the outage", d15 < d30 < d60, f"{d15} {d30} {d60}")
+check("and is capped, not unbounded", reconnect_delay(100000) <= 60.0,
+      str(reconnect_delay(100000)))
+# The whole point: an hour-long outage must not be thousands of ONVIF sessions.
+total = sum(1 for f in range(1, 20000) if reconnect_delay(f) and f % 15 == 0)
+check("a long outage means few reconnects, not one every few seconds",
+      reconnect_delay(20000) == 60.0)
+
+print("\n9. a failing pinger must never take detection down")
 def boom(host, timeout=2.0):
     raise RuntimeError("ping exploded")
 m = LinkMonitor("10.0.0.9", pinger=boom)

@@ -49,6 +49,27 @@ def ping_once(host, timeout=2.0):
     return None
 
 
+def reconnect_delay(fails, base=0.3, first_retry_after=15, cap=60.0):
+    """How long to wait before the next reconnect attempt, after `fails` failed reads.
+
+    Deliberately backs OFF rather than retrying at a fixed rate. Against a camera that
+    is down, a fixed 4.5-second retry is ~13 reconnects a minute for as long as the
+    outage lasts, and for an ONVIF camera every one of those makes go2rtc mint a fresh
+    session on a device that is already unwell. These are cheap cameras — the Victure
+    has rebooted under probing before (TODO.md) — so a detector must not machine-gun one
+    that has fallen over, and must not re-wedge it the instant it comes back up.
+
+    Returns 0 while we are still inside the first window, meaning "keep reading, do not
+    reconnect yet": a brief stall is normal and reconnecting immediately would throw away
+    a working session.
+    """
+    if fails < first_retry_after:
+        return 0.0
+    # 1st reconnect after ~4.5s of failure, then 2x each time, capped.
+    step = (fails // max(1, first_retry_after)) - 1
+    return min(cap, (first_retry_after * base) * (2 ** min(step, 12)))
+
+
 class LinkMonitor:
     """Rolling reachability for one camera.
 

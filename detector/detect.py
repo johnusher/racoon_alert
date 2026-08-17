@@ -22,7 +22,7 @@ import numpy as np, cv2, torch
 from ultralytics import YOLO
 from recorder import CircularRecorder
 from server import MonitorServer
-from link import LinkMonitor
+from link import LinkMonitor, reconnect_delay
 from notify import EmailNotifier
 from scenery import SceneryFilter
 from faces import FaceIdentifier
@@ -475,18 +475,27 @@ def capture_loop():
     try: cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     except Exception: pass
     fails = 0
+    next_retry = 0.0
     while S["run"]:
         ok, frame = cap.read()
         if not ok or frame is None:
             fails += 1
+            wait = reconnect_delay(fails)
             with LK:
                 S["signal"] = (f"no video on {src}"
-                               + (" — go2rtc up? camera powered?" if fails > 30 else ""))
+                               + (" — go2rtc up? camera powered?" if fails > 30 else "")
+                               + (f"; retrying every {int(wait)}s" if wait >= 5 else ""))
             time.sleep(0.3)
-            if fails % 15 == 0:                            # periodic reconnect attempt
+            # Back off rather than retrying at a fixed rate. A camera that is down was
+            # getting ~13 reconnects a minute for the whole outage, and for an ONVIF
+            # camera each one makes go2rtc mint a fresh session on a device that is
+            # already unwell — see reconnect_delay() in link.py.
+            now = time.time()
+            if wait and now >= next_retry:
+                next_retry = now + wait
                 cap.release(); cap = cv2.VideoCapture(src)
             continue
-        fails = 0
+        fails = 0; next_retry = 0.0
         with LK: S["frame"], S["frame_ts"], S["signal"] = frame, time.time(), None
     cap.release()
 
