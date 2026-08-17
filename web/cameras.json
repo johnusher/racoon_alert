@@ -6,7 +6,7 @@
       "short": "West",
       "kit": "Victure PC530",
       "monitor_port": 8090,
-      "tile_stream": "sub",
+      "tile_stream": "main",
       "zone_space": [1920, 1080],
       "detect": {},
       "zones": [],
