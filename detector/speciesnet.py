@@ -168,6 +168,28 @@ class Verdict:
         """
         return bool(self.is_human or self.species)
 
+    def confirms(self, cls):
+        """Does this verdict positively confirm a box MegaDetector called `cls`?
+
+        `identified` asks "did SpeciesNet recognise anything?"; this asks the question
+        the promote path actually needs: "does the second opinion agree with the first
+        about WHAT is there?". On 2026-08-17 at 20:56:29 the black Weber kettle — newly
+        in frame after the camera was re-aimed, and `animal` 0.21 to MegaDetector under
+        IR — was held by the movement gate, then promoted past it because SpeciesNet
+        gave `human 0.47` on the crop, and an ANIMAL event fired whose whole basis was
+        "it is a human". Two weak opinions that contradict each other are not an
+        identification: over 16 crops of the kettle that evening SpeciesNet said blank
+        0.44-0.78 and human 0.15-0.47 and never named a species.
+
+        So: a person box is confirmed by is_human; an animal box only by a NAMED
+        SPECIES; and a species on a person box confirms too, since verify_species then
+        re-tags it (the 21:18 cat MegaDetector called a person). A human on an animal
+        box confirms nothing — inventing a person is the one thing the veto was built
+        never to do, and the measured margin (real people 0.49-0.999) does not support
+        doing it at 0.45.
+        """
+        return bool(self.species) or (self.is_human and cls == "person")
+
     def __repr__(self):
         return (f"<Verdict {self.top_label}={self.top_p:.3f} human={self.human_p:.3f}"
                 f"{' NOT-HUMAN' if self.not_human else ''}"

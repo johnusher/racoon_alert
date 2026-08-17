@@ -240,6 +240,35 @@ if os.path.exists(_model_file):
 else:
     print("  SKIP  weights absent — detector/get-speciesnet.sh")
 
+print("\n16. a promotion must agree with MegaDetector about WHAT kind of thing it is")
+# 2026-08-17 20:56:29: the camera had been re-aimed that day, so the black Weber kettle
+# now sits cut off at the bottom-right of the frame, and under IR MegaDetector reads it
+# as `animal` 0.21-0.83. The movement gate held it (a kettle does not move) — and then
+# promote_unproven asked SpeciesNet, which said `human 0.47` on the crop of a BBQ. That
+# cleared human_min (0.45), .identified was True, and an ANIMAL event fired whose whole
+# justification was "it is a human". Two weak opinions that contradict each other are
+# not an identification: measured over 16 crops of the kettle that evening SpeciesNet
+# gave blank 0.44-0.78 and human 0.15-0.47, never a species; real people run 0.49-0.999.
+# So a person box promotes on is_human, an animal box on a NAMED SPECIES, and a species
+# on a person box promotes too (verify_species then re-tags it — that is the 21:18 cat).
+bbq = R.verdict(p(human=0.47, blank=0.44))
+check("the kettle's `human 0.47` is 'identified' in the old sense", bbq.identified, repr(bbq))
+check("…but does NOT confirm an animal box", not bbq.confirms("animal"), repr(bbq))
+check("…and would confirm a person box (a real person at 0.47 must still promote)",
+      bbq.confirms("person"))
+check("the worst real person (0.491) confirms a person box",
+      R.verdict(p(human=0.491)).confirms("person"))
+check("a named raccoon confirms an animal box",
+      R.verdict(p(northern_raccoon=0.978)).confirms("animal"))
+check("…and a person box (verify_species will re-tag it)",
+      R.verdict(p(northern_raccoon=0.978)).confirms("person"))
+check("an unnamed animal confirms nothing",
+      not R.verdict(p(domestic_cat=0.342, blank=0.3)).confirms("animal"))
+for name, pr in (("the kettle at dusk", 0.62), ("the white blob under the lens", 0.98),
+                 ("bench", 0.921), ("night pavement", 0.983)):
+    v = R.verdict(p(blank=pr))
+    check(f"{name} (blank={pr}) confirms nothing", not v.confirms("animal") and not v.confirms("person"), repr(v))
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")

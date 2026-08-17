@@ -409,7 +409,11 @@ def promote_unproven(img, unproven, now):
     except Exception as e:
         log(f"speciesnet promote: FAILED {e}")
         return []
-    if v is None or not v.identified:
+    # The identification has to be OF the thing MegaDetector boxed: a person box on
+    # is_human, an animal box on a named species. The kettle at 20:56:29 on 2026-08-17
+    # was `animal` 0.21 to MegaDetector and `human 0.47` to SpeciesNet, and .identified
+    # let that contradiction fire an ANIMAL event. See Verdict.confirms.
+    if v is None or not v.confirms(c):
         return []
     log(f"promoted {c}:{cf:.2f}@{box} (movement gate held it back)  {v.describe()}")
     print(f"\n[{time.strftime('%H:%M:%S')}] ✋ {c} not moving, but SpeciesNet says "
