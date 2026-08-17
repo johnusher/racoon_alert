@@ -277,15 +277,24 @@ class SceneryFilter:
                 self.tracks.append(track)
             track["box"] = list(box)
             track["last_seen"] = now
+            displaced = (_displacement(box, track["first_box"])
+                         >= self._gate(anchor, now))
             if not track["moved"]:
-                track["moved"] = (certain
-                                  or _displacement(box, track["first_box"])
-                                  >= self._gate(anchor, now))
+                track["moved"] = certain or displaced
 
             if track["moved"]:
                 confirmed.append((cls, conf, box))
-                anchor["moved_at"] = now        # something real happens here
-                anchor["static"] = False
+                # Only real displacement un-learns a spot. A confident detection is
+                # evidence that something is THERE, never that it moved — and on this
+                # camera MegaDetector is confidently WRONG about fixed objects: it held
+                # `person` 0.69-0.80 on the stone trough at [1263,568,1653,1070] that had
+                # not shifted a pixel in 100 minutes (2026-08-17 07:37-07:47, 15 events).
+                # Letting that reset the clock restarted static_after_secs every few
+                # seconds, so the spot could never be written off as furniture: 2470
+                # sightings, jitter 0.013, and still `static: false` in scenery.json.
+                if displaced:
+                    anchor["moved_at"] = now    # something real happens here
+                    anchor["static"] = False
             else:
                 unproven.append((cls, conf, box))
 

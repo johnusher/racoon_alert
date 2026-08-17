@@ -301,7 +301,17 @@ def verify_species(img, dets, max_crops=4):
         if v is None:
             out.append((c, cf, box)); continue
         overruled = c == "person" and verify_person and v.not_human
-        notes.append(f"{c}[{v.describe()}{' OVERRULED' if overruled else ''}]")
+        # "Not a person" is not the same as "therefore an animal" — an EMPTY crop
+        # satisfies the veto too, since nothing scores as human. On 2026-08-17 07:45:19
+        # SpeciesNet read the stone trough at [1255,564,1652,1065] as blank=0.62
+        # human=0.00; the person box was re-tagged `animal` on the strength of the veto
+        # alone and announced an ANIMAL in an empty garden. A crop the classifier says
+        # is empty is dropped, not relabelled.
+        empty = overruled and v.is_blank
+        notes.append(f"{c}[{v.describe()}"
+                     + (" EMPTY" if empty else " OVERRULED" if overruled else "") + "]")
+        if empty:
+            continue
         out.append(("animal" if overruled else c, cf, box))
         if species_label is None and v.species and (overruled or c == "animal"):
             species_label = v.species
@@ -351,6 +361,16 @@ def promote_unproven(img, unproven, now):
 
 def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     dets, species_label, species_note = verify_species(img, dets)
+    # Everything the event was about turned out to be an empty crop. Say so in the log —
+    # a silent return here would look identical to the detector having missed it — and
+    # fire nothing: with no boxes left the tag would fall through to PERSON, which is
+    # exactly the alert this check exists to prevent.
+    # forced_tag is the --test self-test, which must always produce its event.
+    if not dets and forced_tag is None:
+        log(f"no event: SpeciesNet found nothing in the crop  {species_note}")
+        print(f"\n[{time.strftime('%H:%M:%S')}] ✋ empty crop — no event  ({species_note})",
+              flush=True)
+        return None, set()
     labels = {c for c, _, _ in dets}
     # A named species becomes the tag (RACCOON/CAT); an unnamed one stays ANIMAL rather
     # than risking a blank tag, because the tag is also the event filename.
@@ -558,8 +578,12 @@ try:
                 print(f"\n[{time.strftime('%H:%M:%S')}] known person ({who}) — event suppressed"
                       f"  [{who_detail}]", flush=True)
             else:
-                last_event = t; record_until = t + cfg["postroll"] + cfg["seg_secs"]
-                _name, verified = fire_event(img, fireable, who=who, who_detail=who_detail)
+                last_event = t
+                name, verified = fire_event(img, fireable, who=who, who_detail=who_detail)
+                # Only a real event holds the monitor in its recording state; an empty
+                # crop fires nothing, so the ⏺ indicator must not claim otherwise.
+                if name:
+                    record_until = t + cfg["postroll"] + cfg["seg_secs"]
                 greet(verified)                            # "Hallo." on a real person —
                 #   the VERIFIED classes, so a cat SpeciesNet demoted is not greeted
             faces.reset()                                  # next visit votes on its own

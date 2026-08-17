@@ -67,8 +67,26 @@ import os
 import numpy as np
 
 IMG_SIZE = 480
-# Labels that are real classes but not a species we would ever want to announce.
-NOT_A_SPECIES = frozenset({"blank", "vehicle", "human", "animal"})
+
+# SpeciesNet's label set is a TAXONOMY, not a flat list of species: 432 of its 2498
+# entries are roll-ups that name a rank above species — 282 `… species` (genus level,
+# "procyon species"), 108 `… family`, 18 `… order`, and the 24 bare ones below. A roll-up
+# is not an identification: `bird` is the class-level entry `aves;;;;;bird`, and on
+# 2026-08-17 the garden trough scored `bird` 0.49-0.72 for ten minutes and promoted
+# itself past the movement gate as a positively identified species, 12 times.
+#
+# The authority on what is a species is the label file itself — an entry is one only if
+# it fills the genus AND species columns (load_species_names). This set is the fallback
+# for a SpeciesRules built without the file, and the roll-up ranks that carry no suffix.
+NOT_A_SPECIES = frozenset({
+    "blank", "vehicle", "human", "animal",
+    "bird", "mammal", "reptile", "amphibian", "insect", "rodent", "primate", "bat",
+    "carnivorous mammal", "even-toed ungulate", "owl", "falcon", "caiman", "spider",
+    "bandicoot", "arachnids", "millipede", "frogs", "lizards and snakes", "gastropods",
+    "butterflies and moths", "malacostracan",
+})
+# The suffix the label file uses to mark the rank it stopped at.
+RANK_SUFFIXES = ("species", "family", "order")
 
 # SpeciesNet speaks in common names ("northern raccoon"); events, filenames and the
 # email trigger_on list want one short word. The last word is right far more often than
@@ -112,6 +130,17 @@ class Verdict:
         self.is_human, self.not_human = is_human, not_human
 
     @property
+    def is_blank(self):
+        """SpeciesNet's own "there is nothing in this crop".
+
+        Distinct from not_human, and the difference matters: not_human is satisfied by
+        ANY low P(human), including an empty crop, so a caller that reads "not a person"
+        as "therefore an animal" will announce an animal in an empty frame. That is the
+        07:45:19 ANIMAL event — blank=0.62, human=0.00, over a stone trough.
+        """
+        return self.top_label == "blank"
+
+    @property
     def tag(self):
         """The one-word event tag for this species — CAT, RACCOON — or None."""
         s = short_name(self.species)
@@ -147,13 +176,34 @@ class Verdict:
 class SpeciesRules:
     """The decision layer, kept free of torch so it can be tested on plain vectors."""
 
-    def __init__(self, labels, human_veto=0.25, human_min=0.45, species_min=0.50):
+    def __init__(self, labels, human_veto=0.25, human_min=0.45, species_min=0.50,
+                 species_labels=None):
         self.labels = list(labels)
         self.human_veto = human_veto      # below this P(human): definitely not a person
         self.human_min = human_min        # at or above this: definitely a person
         self.species_min = species_min    # name a species only this confidently
+        # The label file's own answer to "is this a species?", when we have it.
+        self.species_labels = frozenset(species_labels) if species_labels else None
         self._i_human = self.labels.index("human") if "human" in self.labels else -1
         self._i_blank = self.labels.index("blank") if "blank" in self.labels else -1
+
+    def is_species(self, label):
+        """Does this label name a species, rather than a rank above one?
+
+        The label file decides which rank a label stopped at, when we have it; without
+        it, fall back to the known roll-ups and the rank suffix. Either way NOT_A_SPECIES
+        still applies: `human` is taxonomically homo sapiens and the file says so, but a
+        person is reported by is_human, never as a species to announce.
+
+        Getting this wrong is not cosmetic — a roll-up that counts as a positive
+        identification fires an event on its own, past the movement gate.
+        """
+        if not label or label in NOT_A_SPECIES:
+            return False
+        if self.species_labels is not None:
+            return label in self.species_labels
+        parts = label.split()
+        return not parts or parts[-1] not in RANK_SUFFIXES
 
     def verdict(self, probs):
         probs = np.asarray(probs, np.float32).ravel()
@@ -162,13 +212,17 @@ class SpeciesRules:
         top = int(np.argmax(probs))
         top_label, top_p = self.labels[top], float(probs[top])
         species = top_label if (top_p >= self.species_min
-                                and top_label not in NOT_A_SPECIES) else None
+                                and self.is_species(top_label)) else None
         # With no 'human' class we cannot judge humanity at all — say nothing rather
         # than veto everything, because a veto suppresses a person alert.
         known = self._i_human >= 0
         return Verdict(human_p, blank_p, top_label, top_p, species,
                        is_human=known and human_p >= self.human_min,
                        not_human=known and human_p < self.human_veto)
+
+
+def _label_name(parts):
+    return parts[6] or ";".join(p for p in parts[1:6] if p)
 
 
 def load_labels(path):
@@ -178,7 +232,30 @@ def load_labels(path):
         for line in fh:
             parts = line.strip().split(";")
             if len(parts) >= 7:
-                out.append(parts[6] or ";".join(p for p in parts[1:6] if p))
+                out.append(_label_name(parts))
+    return out
+
+
+def load_species_names(path):
+    """The common names that actually name a SPECIES, read off the taxonomy columns.
+
+    An entry is a species only if it fills both genus and species; everything else is a
+    roll-up to a higher rank ("procyon species", "icteridae family", "bird") and must not
+    count as an identification. 432 of the 2498 labels are roll-ups.
+
+    Reading it off the taxonomy rather than pattern-matching the common name is the
+    point: the name is prose — "carnivorous mammal" carries no give-away suffix — while
+    the columns are the model's own statement of which rank it stopped at.
+
+    This reports what the taxonomy says and nothing more, so `human` (homo sapiens) is
+    in here. Dropping the labels we never announce as a species is is_species's job.
+    """
+    out = set()
+    with open(path) as fh:
+        for line in fh:
+            parts = line.strip().split(";")
+            if len(parts) >= 7 and parts[4] and parts[5]:
+                out.add(_label_name(parts))
     return out
 
 
@@ -188,8 +265,10 @@ class SpeciesNetClassifier:
     def __init__(self, model_path, labels_path, human_veto=0.25, human_min=0.45,
                  species_min=0.50):
         self.model_path, self.labels_path = model_path, labels_path
-        self.labels = load_labels(labels_path) if os.path.exists(labels_path) else []
-        self.rules = SpeciesRules(self.labels, human_veto, human_min, species_min) \
+        have = os.path.exists(labels_path)
+        self.labels = load_labels(labels_path) if have else []
+        self.rules = SpeciesRules(self.labels, human_veto, human_min, species_min,
+                                  species_labels=load_species_names(labels_path)) \
             if self.labels else None
         self._model = None
 

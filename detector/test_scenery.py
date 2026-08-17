@@ -36,6 +36,34 @@ BENCH_0926 = [
     (0.68, "person", 0.30, [1218, 861, 1588, 1077]),
     (1.02, "person", 0.30, [1218, 861, 1588, 1077]),
 ]
+# FALSE POSITIVE — the stone trough / plant pot / bench cluster on the right of frame,
+# 20260817_074519_animal.mp4. The box is frozen (x1 1256-1274, y2 1065-1075 over the
+# whole clip) but MegaDetector's CONFIDENCE in it is not: it runs 0.23 to 0.80. That is
+# what separates this from the bench and the rock — both of those stayed under 0.45, so
+# `conf_certain` never fired on them and they could be learned as scenery. This one sits
+# above 0.70 for seconds at a time while never moving a pixel.
+TROUGH_0745 = [
+    (0.00, "person", 0.69, [1260, 566, 1653, 1073]),
+    (0.31, "person", 0.71, [1257, 565, 1653, 1073]),
+    (0.62, "person", 0.70, [1257, 565, 1653, 1073]),
+    (0.92, "person", 0.70, [1257, 565, 1653, 1073]),
+    (1.23, "person", 0.71, [1257, 565, 1653, 1073]),
+    (1.54, "person", 0.70, [1257, 565, 1653, 1073]),
+    (1.85, "person", 0.71, [1257, 565, 1653, 1073]),
+    (6.16, "person", 0.77, [1259, 567, 1654, 1074]),
+    (6.47, "person", 0.80, [1256, 566, 1653, 1073]),
+    (6.78, "person", 0.80, [1256, 566, 1653, 1073]),
+    (7.09, "person", 0.79, [1256, 566, 1653, 1073]),
+    (7.40, "person", 0.79, [1256, 566, 1653, 1073]),
+    (7.70, "person", 0.79, [1256, 566, 1653, 1073]),
+    (8.01, "person", 0.79, [1256, 566, 1653, 1073]),
+    (8.32, "person", 0.49, [1267, 572, 1653, 1073]),
+    (8.63, "person", 0.53, [1266, 570, 1653, 1074]),
+    (8.94, "person", 0.54, [1266, 570, 1653, 1074]),
+    (10.48, "person", 0.24, [1261, 567, 1654, 1073]),
+    (11.40, "person", 0.33, [1260, 567, 1654, 1074]),
+    (12.33, "person", 0.39, [1259, 567, 1654, 1075]),
+]
 # TRUE POSITIVE — the raccoon, 20260816_035358_animal.mp4. Only two detections in
 # the whole clip: the filter must not need more than that.
 RACCOON = [
@@ -233,6 +261,16 @@ def fresh(**kw):
     return SceneryFilter(**kw)
 
 
+def fresh_bench(**kw):
+    """A filter that has already learned the bench as scenery (as in section 3/4)."""
+    kw.setdefault("static_after_secs", 180)
+    kw.setdefault("min_sightings", 5)
+    f = fresh(**kw)
+    for minute in range(0, 40, 5):
+        replay(f, BENCH_0855, t0=minute * 60)
+    return f
+
+
 print("\n1. the bench must never clear the movement gate (it never moves)")
 kept = replay(fresh(), BENCH_0926)
 check("bench 09:26 clears nothing to fire", not kept, f"{len(kept)} of {len(BENCH_0926)}")
@@ -393,6 +431,35 @@ check("a lower min_move cannot rescue them (displacement really is 0.000)",
 check("only trusting confidence would rescue them — and that lets the bench back in",
       events_fired(FRIEND_2248, fresh(conf_certain=0.30)) >= 1
       and events_fired(BENCH_0926, fresh(conf_certain=0.30)) >= 1)
+
+print("\n10. confidence is not motion: the trough that stayed unlearnable (2026-08-17)")
+# The stone trough was detected 2470 times over 100 minutes, never moved a pixel
+# (jitter 0.013, gate 0.032) — and was STILL `static: false` in scenery.json, so it
+# fired 15 events between 07:37 and 07:47. The reason is that `conf_certain` did two
+# jobs: it let a confident detection override a learned anchor (right, and section 4),
+# and it also counted as MOVEMENT, which reset moved_at and cleared static (wrong).
+# MegaDetector reaches 0.80 on this trough, so the 180s static clock was restarted every
+# few seconds and the spot could never be written off. Confidence is evidence that
+# something is THERE, never that it moved.
+f = fresh(static_after_secs=180, min_sightings=5)
+for minute in range(0, 12):
+    replay(f, TROUGH_0745, t0=minute * 60)
+trough = [a for a in f.anchors if a["max_conf"] >= 0.70]
+check("the trough really is detected at high confidence", len(trough) == 1,
+      f"{len(trough)} anchors over conf_certain")
+check("…and really never moves", all(a["jitter"] < 0.032 for a in trough),
+      f"jitter={trough[0]['jitter']:.4f}" if trough else "-")
+check("the trough anchor is marked static", any(a["static"] for a in trough),
+      f"static={[a['static'] for a in trough]}")
+check("…so the low-confidence detections stop firing",
+      len(replay(f, [d for d in TROUGH_0745 if d[2] < 0.70], t0=13 * 60)) == 0,
+      f"{len(replay(f, [d for d in TROUGH_0745 if d[2] < 0.70], t0=14 * 60))} still confirmed")
+# The other half of conf_certain — overriding a learned anchor — must be untouched.
+check("a confident detection still overrides a QUIET anchor (section 4 unchanged)",
+      len(replay(fresh_bench(), [(0.0, "person", 0.84, [1215, 860, 1590, 1077])],
+                 t0=45 * 60)) == 1)
+check("a real person walking through is still confirmed", len(replay(fresh(), PERSON)) >= 20)
+check("the raccoon is still confirmed", len(replay(fresh(), RACCOON)) >= 1)
 
 print()
 if FAILS:

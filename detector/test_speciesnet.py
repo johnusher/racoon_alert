@@ -123,6 +123,87 @@ check("an unsure animal is not promoted", not R.verdict(p(domestic_cat=0.342, bl
 check("a mid-range human is not promoted on its own",
       not R.verdict(p(human=0.35, blank=0.3)).identified)
 
+print("\n12. a taxonomic ROLLUP is not a species (the 2026-08-17 garden trough)")
+# MegaDetector called the stone trough at [1263,568,1653,1070] `person` 0.22-0.80 for
+# 100 minutes. SpeciesNet read that crop as `bird` 0.49-0.72 — and `bird` is the
+# CLASS-level rollup `aves;;;;;bird`, not a species. NOT_A_SPECIES listed only
+# blank/vehicle/human/animal, so `bird 0.55` counted as a positive identification,
+# promoted the box straight past the movement gate and tagged 12 BIRD events in ten
+# minutes. 432 of the 2498 labels (17%) are rollups like this: 282 `… species`,
+# 108 `… family`, 18 `… order`, and 24 bare ones (bird, mammal, rodent, primate, bat…).
+ROLLUPS = ["bird", "mammal", "rodent", "carnivorous mammal", "primate", "bat",
+           "procyon species", "icteridae family", "galliformes order"]
+ROLL_LABELS = ROLLUPS + ["human", "blank", "northern raccoon"]
+RR = SpeciesRules(ROLL_LABELS)
+
+
+def rp(label, prob):
+    """A vector peaked on one label of ROLL_LABELS."""
+    v = np.zeros(len(ROLL_LABELS), np.float32)
+    v[ROLL_LABELS.index(label)] = prob
+    rest = [i for i in range(len(ROLL_LABELS)) if v[i] == 0]
+    for i in rest:
+        v[i] = max(0.0, 1.0 - prob) / len(rest)
+    return v
+
+
+for label in ROLLUPS:
+    v = RR.verdict(rp(label, 0.72))                 # 0.72 = the trough's best `bird` score
+    check(f"{label!r} names no species", v.species is None, f"species={v.species!r}")
+    check(f"{label!r} does not promote past the movement gate", not v.identified, repr(v))
+check("a real species is still named next to them",
+      RR.verdict(rp("northern raccoon", 0.978)).species == "northern raccoon")
+check("…and still promotes", RR.verdict(rp("northern raccoon", 0.978)).identified)
+
+print("\n13. the real label file decides what a species is, by taxonomy")
+_labels_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "models", "speciesnet_labels.txt")
+if os.path.exists(_labels_file):
+    from speciesnet import load_labels, load_species_names
+    names, spp = load_labels(_labels_file), load_species_names(_labels_file)
+    fr = SpeciesRules(names, species_labels=spp)
+    check("every label is classified", len(names) == 2498, f"{len(names)}")
+    # 2498 labels = 2066 at species rank + 432 roll-ups; the species names collapse to
+    # 2065 because 'domestic water buffalo' is listed twice, under two UUIDs.
+    check("the taxonomy roll-ups are found", len(names) - len(spp) == 433,
+          f"{len(names)} labels - {len(spp)} species names")
+    check("…and that is 432 roll-ups plus the one duplicated name",
+          sum(1 for n in names if n in spp) == 2066, f"{sum(1 for n in names if n in spp)}")
+    for label in ("bird", "mammal", "blank", "vehicle", "reptile",
+                  "icteridae family", "galliformes order"):
+        check(f"{label!r} is not a species", not fr.is_species(label))
+    # homo sapiens IS a species by taxonomy — but a person is reported by is_human, and
+    # naming them as a species would tag the event with their genus.
+    check("'human' is a species to the taxonomy", "human" in spp)
+    check("…but is never announced as one", not fr.is_species("human"))
+    for label in ("northern raccoon", "domestic cat", "red fox",
+                  "western european hedgehog"):
+        check(f"{label!r} IS a species", fr.is_species(label))
+    i_bird = names.index("bird")
+    probs = np.full(len(names), 0.28 / (len(names) - 1), np.float32); probs[i_bird] = 0.72
+    v = fr.verdict(probs)
+    check("the trough's `bird 0.72` names no species", v.species is None, repr(v))
+    check("…and cannot promote past the movement gate", not v.identified)
+else:
+    print("  SKIP  labels file absent — detector/get-speciesnet.sh")
+
+print("\n14. `blank` is 'nothing is there', not 'therefore an animal'")
+# The 07:45:19 ANIMAL event: SpeciesNet said blank=0.62 human=0.00 on the trough crop.
+# human_p 0.00 satisfies the not_human veto, so detect.py re-tagged the person box
+# `animal` and fired an ANIMAL alert about an empty stone trough. A blank crop has to be
+# distinguishable from one holding an animal, or "not a person" silently means "animal".
+v = R.verdict(p(blank=0.62, human=0.0))
+check("a blank crop is flagged blank", v.is_blank, repr(v))
+check("…and is still not-human", v.not_human)
+check("…and names no species", v.species is None)
+v = R.verdict(p(northern_raccoon=0.978))
+check("a named animal is NOT blank", not v.is_blank, repr(v))
+v = R.verdict(p(human=0.975))
+check("a human is NOT blank", not v.is_blank)
+# `blank` need not win outright to mean nothing is there, but the top label decides.
+v = R.verdict(p(blank=0.48, domestic_cat=0.30))
+check("blank on top at low confidence still reads blank", v.is_blank, repr(v))
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")
