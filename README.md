@@ -265,7 +265,11 @@ and handles SIGTERM too; without that, a detached detector could only ever be fo
   ends). So when an event *would* have fired but nothing cleared the movement gate,
   SpeciesNet is asked directly and a positive identification fires anyway. Measured:
   6/6 real people promoted, 0/6 furniture — the bench, shoe rack, paving, bush, plant
-  pot and bucket all read `blank` 0.92–0.98.
+  pot and bucket all read `blank` 0.92–0.98. The identification has to be *of the kind
+  of thing MegaDetector boxed*: a person box promotes on human, an animal box only on a
+  named species. On 2026-08-17 the black Weber kettle, `animal 0.21` under IR, was
+  promoted as an ANIMAL because SpeciesNet said `human 0.47` about it — two weak
+  opinions that contradict each other are not an identification (`Verdict.confirms`).
 
   ⚠️ This **replaced** the CLIP nearest-reference matcher in `species.py`, whose docstring
   warned it "partly keys on lighting". It keyed on nothing else: an empty patch of night
