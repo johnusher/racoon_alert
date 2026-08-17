@@ -101,10 +101,19 @@ motion/optical-flow, so it's robust to the wind camera-shake and fluttering foli
 
 ```
 ./detector/get-model.sh                       # one-time: fetch MegaDetector weights (~50MB)
+./detector/get-speciesnet.sh                  # one-time: fetch SpeciesNet weights (~225MB)
 ../.venv/bin/pip install -r detector/requirements.txt
 h32 detect                                    # run detector + recorder (Ctrl-C to stop)
 h32 detect test-event                         # fire one event to verify snapshot+clip
+h32 detect stop                               # stop one that was started detached
 ```
+
+`h32 detect` **always replaces** whatever detector is already running — only one can hold
+the monitor port, and wanting to restart it is the usual reason for typing it. The old one
+is asked to stop first (and gets to save its learned scenery), escalating only if it will
+not. ⚠️ A detector started in the background inherits SIGINT as *ignored* — POSIX has a
+non-interactive shell do that to background jobs — so `detect.py` explicitly restores it
+and handles SIGTERM too; without that, a detached detector could only ever be force-killed.
 
 - **Live monitor:** `h32 detect` opens `http://127.0.0.1:1984/monitor.html` (and prints the link) —
   the same live WebRTC video and controls as the plain viewer (volume, digital zoom/pan,
@@ -114,6 +123,16 @@ h32 detect test-event                         # fire one event to verify snapsho
   by go2rtc so it is same-origin with the stream; it pulls boxes and events from the detector
   on `:8090` (`/state.json`, plus `/stream.mjpg` as an annotated fallback). Plain `h32` is the
   AI-free viewer; `h32 detect` is the AI monitor.
+- **Two live switches on the monitor** — ⏺ **auto-record** (`r`) and ✉️ **e-mail alerts** (`e`).
+  They decide what an event *produces*; **detection never stops** and every event is still
+  listed and still written to `events.log`, so turning both off leaves a full record of what
+  was seen and when, just without clips or mail (handy when you don't want a 3am raccoon on
+  your phone). An unrecorded event shows a struck-through placeholder instead of a thumbnail.
+  The state lives in the **detector**, not the page, so two browsers cannot disagree about
+  whether it is recording and a reload cannot silently re-arm e-mail; flips are logged to
+  `events.log`. ✉️ greys out if e-mail isn't configured rather than pretending. Defaults come
+  from `config.json` (`auto_record`, `email.enabled`) — the switches are runtime-only, so a
+  restart comes back up in the configured state rather than in whatever mood you left it.
 - **No camera signal:** if the feed stops, the monitor says so — a **NO CAMERA SIGNAL** overlay
   with the reason and when the last frame arrived — instead of showing the last frame with a
   ticking clock over it. Detection pauses and no events fire until video returns (`signal_timeout_secs`).

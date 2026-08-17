@@ -11,7 +11,7 @@ the snapshot/clip files. Responses are CORS-open because the page is on another 
 The annotated MJPEG is still served at /stream.mjpg as a fallback (and is only encoded
 while somebody is actually watching it). Runs in a daemon thread inside detect.py.
 """
-import os, json, time, threading
+import os, json, time, threading, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PAGE = """<!doctype html><html><head><meta charset=utf-8><title>h32 · detector</title>
@@ -45,6 +45,34 @@ class MonitorServer:
         self.last_frame = 0.0     # when the detector last got a frame (epoch seconds)
         self.mjpeg_clients = 0    # nobody watching → don't spend CPU encoding JPEGs
         self.httpd = None
+        # ---- switches the monitor page can flip, live (see /set) ----
+        # Runtime only, deliberately: config.json holds the defaults, and a restart
+        # should come back up in the configured state rather than in whatever mood the
+        # last session left it in. Detection is never affected — events still fire and
+        # still appear in the sidebar; these only decide what an event *produces*.
+        self.auto_record = True       # write the .jpg snapshot and the .mp4 clip
+        self.email_alerts = True      # send the e-mail alert
+        self.email_available = False  # is e-mail even configured? (greys the button out)
+        self.on_switch = None         # detect.py hooks this to log a flip
+
+    def switches(self):
+        with self._lock:
+            return {"auto_record": self.auto_record, "email_alerts": self.email_alerts,
+                    "email_available": self.email_available}
+
+    def set_switch(self, name, on):
+        """Idempotent: sets an absolute value rather than flipping, so a repeated or
+        prefetched request can never leave the button and the detector disagreeing."""
+        if name not in ("auto_record", "email_alerts"):
+            return None
+        if name == "email_alerts" and not self.email_available:
+            return None                       # nothing to turn on; don't lie to the UI
+        with self._lock:
+            before = getattr(self, name)
+            setattr(self, name, bool(on))
+        if before != bool(on) and self.on_switch:
+            self.on_switch(name, bool(on))
+        return bool(on)
 
     def update_frame(self, jpeg_bytes):
         with self._lock:
@@ -73,7 +101,9 @@ class MonitorServer:
                     "recording": self.recording, "boxes": self.boxes,
                     "faces": self.faces,
                     "frame_w": self.frame_w, "frame_h": self.frame_h,
-                    "last_frame": self.last_frame, "events": self.events}
+                    "last_frame": self.last_frame, "events": self.events,
+                    "auto_record": self.auto_record, "email_alerts": self.email_alerts,
+                    "email_available": self.email_available}
 
     def add_event(self, tag, snapshot, detail="", clip=None, who=None):
         self.events.insert(0, {"tag": tag, "snapshot": snapshot, "detail": detail,
@@ -96,6 +126,8 @@ class MonitorServer:
                     self._send(200, "text/html", PAGE.format(url=server.monitor_url).encode())
                 elif p in ("/state.json", "/events.json"):
                     self._send(200, "application/json", json.dumps(server.state()).encode())
+                elif p == "/set":
+                    self._set(self.path.partition("?")[2])
                 elif p == "/stream.mjpg":
                     self._stream()
                 elif p.startswith("/file/"):
@@ -113,6 +145,19 @@ class MonitorServer:
                 self.send_header("Cache-Control", "no-store"); self.end_headers()
                 try: self.wfile.write(body)
                 except Exception: pass
+            def _set(self, query):
+                """/set?record=0&email=1 — the monitor's two switches.
+
+                A GET, not a POST: the page is served from another port, and a GET
+                needs no CORS preflight. Safe to do that here because it sets an
+                absolute value (not a toggle) on a loopback-only server.
+                """
+                q = urllib.parse.parse_qs(query)
+                for key, attr in (("record", "auto_record"), ("email", "email_alerts")):
+                    if key in q:
+                        on = q[key][0].strip().lower() not in ("0", "false", "off", "")
+                        server.set_switch(attr, on)
+                self._send(200, "application/json", json.dumps(server.switches()).encode())
             def _file(self, name):
                 path = os.path.join(server.events_dir, name)
                 if not os.path.isfile(path): return self._send(404, "text/plain", b"no file")

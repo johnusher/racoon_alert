@@ -16,7 +16,7 @@ furniture MegaDetector likes to call a person.
 If the camera stops feeding us, the monitor says so instead of sitting on the last frame:
 nothing is detected, no events fire, and the picture is replaced by a NO CAMERA SIGNAL card.
 """
-import os, sys, json, time, threading, urllib.request, webbrowser
+import os, sys, json, time, signal, threading, urllib.request, webbrowser
 from collections import deque
 import numpy as np, cv2, torch
 from ultralytics import YOLO
@@ -168,6 +168,17 @@ MONITOR_URL = cfg.get("monitor_url") or "http://127.0.0.1:1984/monitor.html"
 monitor = MonitorServer(cfg.get("monitor_port", 8090), events_dir, fps=display_fps,
                         monitor_url=MONITOR_URL)
 notifier = EmailNotifier(os.path.join(BASE, "secrets.json"), cfg.get("email"))
+# The monitor's two live switches start from config and can be flipped from the page.
+# E-mail can only be switched on if it is actually configured, so the button greys out
+# rather than pretending. Flips are logged — "why did I get no clip at 3am" should be
+# answerable from events.log alone.
+monitor.auto_record = cfg.get("auto_record", True)
+monitor.email_available = notifier.enabled
+monitor.email_alerts = notifier.enabled
+monitor.on_switch = lambda name, on: (
+    log(f"switch: {name} -> {'ON' if on else 'OFF'} (from the monitor)"),
+    print(f"\n[{time.strftime('%H:%M:%S')}] 🎛  {name} switched "
+          f"{'ON' if on else 'OFF'} from the monitor", flush=True))
 
 # ---- shared state between threads ----
 #   dets  — boxes we are acting on;  muted — boxes the scenery filter dropped (drawn grey)
@@ -351,20 +362,31 @@ def fire_event(img, dets, forced_tag=None, who=None, who_detail=""):
     where = " ".join(f"{c}@{box}" for c, _, box in dets) or "-"
     ts = time.strftime("%Y%m%d_%H%M%S"); name = f"{ts}_{tag.lower()}"; snap = f"{name}.jpg"
     banner = f"{tag} · {who.upper()}" if who else tag
-    cv2.imwrite(os.path.join(events_dir, snap), draw_overlay(img, dets, banner=banner))
-    print(f"\n🔔 {tag}: {detail}  → snapshot {snap}, recording clip…")
+    # The monitor's two switches. Detection, the events list and events.log are never
+    # affected — these only decide what an event PRODUCES, so turning both off still
+    # leaves a full record of what was seen and when.
+    recording_media = monitor.auto_record
+    emailing = monitor.email_alerts
+    if recording_media:
+        cv2.imwrite(os.path.join(events_dir, snap), draw_overlay(img, dets, banner=banner))
+    print(f"\n🔔 {tag}: {detail}  → "
+          + (f"snapshot {snap}, recording clip…" if recording_media else "media OFF")
+          + ("" if emailing else ", email OFF"))
     # Log the box coords too: a false positive that keeps firing from the same spot is
     # then obvious in events.log, which is how the bench in scenery.py was tracked down.
-    log(f"{tag}  {detail}  {where}  snapshot={snap}"
+    log(f"{tag}  {detail}  {where}  snapshot={snap if recording_media else 'OFF'}"
         + (f"  faces[{who_detail}]" if who_detail else "")
-        + (f"  {species_note}" if species_note else ""))
-    monitor.add_event(tag, snap, detail, who=who)
-    notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap), who=who)
-    def _save():
-        clip = rec.save_event(name)
-        if clip: monitor.set_clip(snap, os.path.basename(clip))
-        log(f"clip: {os.path.basename(clip) if clip else 'FAILED'}")
-    threading.Thread(target=_save, daemon=True).start()
+        + (f"  {species_note}" if species_note else "")
+        + ("" if emailing else "  email=OFF"))
+    monitor.add_event(tag, snap if recording_media else None, detail, who=who)
+    if emailing:
+        notifier.maybe_alert(tag, detail, os.path.join(events_dir, snap), who=who)
+    if recording_media:
+        def _save():
+            clip = rec.save_event(name)
+            if clip: monitor.set_clip(snap, os.path.basename(clip))
+            log(f"clip: {os.path.basename(clip) if clip else 'FAILED'}")
+        threading.Thread(target=_save, daemon=True).start()
     return name, labels
 
 # ---- threads ----
@@ -417,6 +439,18 @@ def publish_loop():
         time.sleep(period)
 
 # ---- run ----
+def _stop_signal(_signum, _frame):
+    raise KeyboardInterrupt          # reuse the single shutdown path at the bottom
+
+
+# A detector started in the background (`nohup … &`) inherits SIGINT as *ignored* —
+# POSIX has a non-interactive shell do that to background jobs — so a detached one
+# survives the polite stop and has to be force-killed, losing the scenery it has learned
+# and leaving ffmpeg mid-segment. Put SIGINT back, and treat SIGTERM the same way, so
+# `h32 detect` can always replace a running detector cleanly however it was started.
+signal.signal(signal.SIGINT, signal.default_int_handler)
+signal.signal(signal.SIGTERM, _stop_signal)
+
 TEST = len(sys.argv) > 1 and sys.argv[1] == "test-event"
 url = MONITOR_URL
 monitor.start(); rec.start()
@@ -429,6 +463,9 @@ print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
 print(f"    species: {'on' if species_on else 'off'} — {species.describe()}"
       + ("   (may OVERRULE a MegaDetector 'person')" if verify_person else ""))
+print(f"    switches: media recording {'ON' if monitor.auto_record else 'OFF'}, "
+      f"email alerts {'ON' if monitor.email_alerts else ('OFF' if monitor.email_available else 'not configured')}"
+      f"  — both flippable live on the monitor")
 print(f"    gallery: {'on' if gallery_on else 'off'} — harvesting crops to learn from"
       f" ({gallery.describe()})" if gallery_on else "    gallery: off")
 print(f"    talk: {'on' if talk_on else 'off'}"

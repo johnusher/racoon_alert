@@ -106,6 +106,15 @@
   .grp button:hover{background:var(--panel-2)}
   .grp button:active{transform:translateY(1px)}
   .grp button.on{color:var(--accent)}
+  /* A switch that is OFF has to look deliberately off, not merely unlit: these two
+     stop the detector producing clips and e-mails, so "is it armed?" must be readable
+     at a glance from across the room. */
+  .grp button.sw{position:relative}
+  .grp button.sw:not(.on){color:var(--dim)}
+  .grp button.sw:not(.on)::after{content:""; position:absolute; left:6px; right:6px; top:50%;
+    height:1.5px; background:#e0564d; transform:rotate(-20deg); border-radius:2px}
+  .grp button:disabled{opacity:.35; cursor:not-allowed}
+  .grp button:disabled:hover{background:transparent}
   .grp label{color:var(--dim); font-size:11.5px; padding:0 4px}
   input[type=range]{accent-color:var(--accent); width:84px}
   .segbtn{padding:0 12px; width:auto; font-size:12.5px; color:var(--dim)}
@@ -120,6 +129,11 @@
   .ev{display:flex; gap:10px; padding:8px; border:1px solid var(--line); border-radius:10px;
       margin-bottom:8px; background:#0f1317}
   .ev img{width:88px; height:50px; object-fit:cover; border-radius:6px; background:#000}
+  .ev .nomedia{width:88px; height:50px; border-radius:6px; background:#000; flex:none;
+    display:flex; align-items:center; justify-content:center; color:#5c646e; font-size:15px;
+    border:1px dashed var(--line); position:relative}
+  .ev .nomedia::after{content:""; position:absolute; left:30px; right:30px; top:50%;
+    height:1.5px; background:#e0564d; transform:rotate(-20deg); border-radius:2px}
   .ev .m{flex:1; min-width:0}
   .ev .tag{font-weight:700}
   .ev .tag.RACCOON{color:#ffcf6a} .ev .tag.ANIMAL{color:#4cc2ff}
@@ -194,6 +208,10 @@
         <div class="grp">
           <button id="segMain" class="segbtn on">1080p</button>
           <button id="segSub" class="segbtn">360p</button>
+        </div>
+        <div class="grp" title="What an event produces — detection itself never stops">
+          <button id="btnRec" class="ico sw on" title="Auto-record snapshot + clip on every event (r)">⏺</button>
+          <button id="btnMail" class="ico sw on" title="E-mail an alert on every event (e)">✉️</button>
         </div>
         <div class="grp">
           <button id="btnBoxes" class="ico on" title="Show detection boxes (b)">🔲</button>
@@ -367,6 +385,7 @@ async function poll(){
   layout();
   boxes = d.boxes || []; faceBoxes = d.faces || []; drawBoxes();
   document.getElementById('rec').classList.toggle('on', !!d.recording);
+  renderSwitches(d);
 
   if(online){
     hideVeil();
@@ -382,6 +401,40 @@ async function poll(){
   }
   renderEvents(d.events || []);
 }
+// ---- the two detector switches ----
+// State lives in the detector, not the page: two browsers looking at the same camera
+// must not disagree about whether it is recording, and a reload must not silently
+// re-arm e-mail. So the buttons only ever RENDER what /state.json reports, and clicking
+// asks the detector to change it. Nothing is toggled optimistically.
+const btnRec = document.getElementById('btnRec');
+const btnMail = document.getElementById('btnMail');
+
+function renderSwitches(d){
+  btnRec.classList.toggle('on', d.auto_record !== false);
+  const mailOk = d.email_available !== false;
+  btnMail.disabled = !mailOk;
+  btnMail.classList.toggle('on', mailOk && d.email_alerts !== false);
+  btnMail.title = mailOk
+    ? `E-mail an alert on every event — currently ${d.email_alerts !== false ? 'ON' : 'OFF'} (e)`
+    : 'E-mail is not configured (detector/secrets.json + H32_EMAIL_TO)';
+  btnRec.title = `Auto-record snapshot + clip on every event — currently `
+               + `${d.auto_record !== false ? 'ON' : 'OFF'} (r)`;
+}
+
+async function setSwitch(key, on){
+  try{
+    const s = await (await fetch(`${API}/set?${key}=${on?1:0}`,{cache:'no-store'})).json();
+    renderSwitches(s);
+    toast(key === 'record'
+      ? (s.auto_record ? 'recording snapshots + clips' : 'media recording OFF — events still logged')
+      : (s.email_alerts ? 'e-mail alerts on' : 'e-mail alerts OFF'));
+  }catch(e){
+    toast('detector offline — switch not applied');
+  }
+}
+btnRec.onclick  = ()=> setSwitch('record', !btnRec.classList.contains('on'));
+btnMail.onclick = ()=>{ if(!btnMail.disabled) setSwitch('email', !btnMail.classList.contains('on')); };
+
 function showVeil(title, why, when, hint, soft=false){
   document.getElementById('veilTitle').textContent = title;
   document.getElementById('veilWhy').textContent = why;
@@ -395,13 +448,18 @@ function hideVeil(){ veil.classList.remove('show'); }
 function renderEvents(list){
   const box = document.getElementById('events');
   if(!list.length){ box.innerHTML='<div class="empty">none yet — watching…</div>'; return; }
+  // e.snapshot is null when media recording was switched off: the detection still
+  // happened and is still listed, there is just no file to show for it.
   box.innerHTML = list.map(e=>`<div class="ev">
-    <img src="${API}/file/${e.snapshot}" onerror="this.style.visibility='hidden'">
+    ${e.snapshot
+      ? `<img src="${API}/file/${e.snapshot}" onerror="this.style.visibility='hidden'">`
+      : `<div class="nomedia" title="media recording was off">⏺</div>`}
     <div class="m"><div class="tag ${e.tag}">${e.tag}${
       e.who!==undefined && e.tag==='PERSON'
         ? ` <span class="who${e.who?'':' unknown'}">${e.who||'unknown'}</span>` : ''}</div>
     <div class="t">${e.time} · ${e.detail||''}</div>
-    ${e.clip?`<a href="${API}/file/${e.clip}" target="_blank">▶ clip</a>`:''}</div></div>`).join('');
+    ${e.clip?`<a href="${API}/file/${e.clip}" target="_blank">▶ clip</a>`
+            :(e.snapshot?'':'<span class="t">not recorded</span>')}</div></div>`).join('');
 }
 poll(); setInterval(poll, 1000);
 
@@ -470,6 +528,8 @@ window.addEventListener('keydown', e=>{
     case 'b': btnBoxes.click(); break;
     case 'm': setMuted(!muted); break;
     case 's': snapshot(); break;
+    case 'r': btnRec.click(); break;
+    case 'e': btnMail.click(); break;
   }
 });
 

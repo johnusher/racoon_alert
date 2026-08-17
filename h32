@@ -5,8 +5,11 @@
 #   h32 restart    restart it
 #   h32 status     show whether it's running
 #   h32 log        tail the go2rtc log
-#   h32 detect     run the animal detector + recorder (needs go2rtc; Ctrl-C to stop)
+#   h32 detect     run the animal detector + recorder (needs go2rtc; Ctrl-C to stop).
+#                  Any detector already running is stopped first, so this always
+#                  replaces rather than failing on the busy monitor port.
 #   h32 detect test-event   fire one test event to verify snapshot+recording
+#   h32 detect stop         stop a running detector (incl. a detached one) and exit
 #   h32 say <text> speak text through the camera's speaker (German voice Anna)
 #   h32 play <f.wav>   play a wav file through the camera's speaker
 #
@@ -45,8 +48,42 @@ start() {
   open "$URL"
 }
 
+# Only one detector can exist: the second one cannot bind the monitor port and dies.
+# Running `h32 detect` almost always MEANS "replace whatever is running" — often a
+# detached one from an earlier session that is no longer attached to any terminal, so
+# there is nothing to Ctrl-C. SIGINT rather than SIGKILL so it saves the scenery it has
+# learned and shuts the recorder down cleanly.
+stop_detector() {
+  local pids
+  pids=$(pgrep -f "detector/detect.py" 2>/dev/null)
+  [[ -z "$pids" ]] && return 0
+  echo "h32: a detector is already running (pid ${pids//$'\n'/ }) — stopping it first…"
+  # Escalate. SIGTERM as well as SIGINT because a detector started in the background
+  # inherited SIGINT as ignored (POSIX, non-interactive shell) — detect.py puts SIGINT
+  # back, but a detector from BEFORE that fix is still out there ignoring it.
+  local sig
+  for sig in INT TERM KILL; do
+    kill -$sig ${=pids} 2>/dev/null
+    for i in {1..24}; do                     # 6s per signal; it saves state on the way out
+      pgrep -f "detector/detect.py" >/dev/null || { echo "h32: stopped."; return 0 }
+      sleep 0.25
+    done
+    [[ $sig == KILL ]] || echo "h32: no response to SIG$sig — escalating" >&2
+  done
+  echo "h32: could not stop the running detector" >&2
+  return 1
+}
+
 detect() {
+  # `h32 detect stop` — there is no terminal to Ctrl-C when it was started detached.
+  if [[ "$1" == "stop" ]]; then
+    stop_detector || true
+    pgrep -f "detector/detect.py" >/dev/null && echo "h32: detector still running" >&2 \
+                                             || echo "h32: no detector running"
+    return 0
+  fi
   ensure_up || { echo "h32: go2rtc failed — check $LOG" >&2; return 1; }
+  stop_detector
   echo "h32: starting detector (Ctrl-C to stop)…"
   exec "$VENV/bin/python" "$DIR/detector/detect.py" "$@"
 }
