@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cluster the harvested animal crops, show each cluster as a contact sheet, and name them.
+Cluster the harvested animal crops, show them all on one sheet, and name them.
 
 WHY
 
@@ -16,25 +16,26 @@ anything at detection time — it only turns a pile of crops into named referenc
 HOW
 
 Crops with an embedding are grouped by average-linkage cosine, biggest cluster first.
-For each cluster you get a contact sheet (a montage JPEG, opened for you on macOS) and a
-prompt. Name it, or:
+EVERY cluster goes onto ONE labelled sheet, which is opened once (see overview_sheet for
+why one file rather than one per cluster), then you are prompted per cluster:
 
     <name>    label the whole cluster
     s         skip it, decide later
     d         drop it — furniture, an empty frame, a false positive
     q         stop here and write what has been named so far
 
-Labels are written to detector/animal_refs.npz (embeddings + label per crop) and mirrored
-into the gallery manifest, so re-running picks up where you left off rather than asking
-about crops you have already named.
+Or skip the prompting entirely and label clusters by number with --set.
+
+Labels are written to detector/animal_refs.npz (embeddings + label per crop), so
+re-running picks up where you left off rather than asking about crops already named.
 
 Usage:
-    detector/label_animals.py                 # label what is unlabelled
-    detector/label_animals.py --min-cos 0.70  # fussier grouping (default 0.55)
-    detector/label_animals.py --review        # show what is already labelled and stop
+    h32 label                                 # label what is unlabelled
+    h32 label --set 1=hedgehog,5=_drop        # label by cluster number, no prompting
+    h32 label --min-cos 0.70                  # fussier grouping (default 0.55)
+    h32 label --review                        # show what is already labelled and stop
 """
 import argparse
-import glob
 import json
 import os
 import subprocess
@@ -50,11 +51,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
 REFS = os.path.join(BASE, "animal_refs.npz")
-# One file PER CLUSTER, not one reused path: `open` on a path Preview already has up
-# just refocuses that window, so a single filename shows cluster 1 for every cluster —
-# which is how eleven different clusters all looked like hedgehogs on 2026-08-17.
-SHEET_DIR = os.path.join(BASE, "gallery")
-SHEET_GLOB = "_cluster_*.jpg"
+SHEET = os.path.join(BASE, "gallery", "_clusters.jpg")   # ONE sheet — see overview_sheet
 
 
 def unit(v):
@@ -118,11 +115,51 @@ def cluster(embs, min_cos=MIN_COS):
     return lab
 
 
-def contact_sheet(paths, out, cols=6, tile=180):
-    """Montage the cluster's crops into one JPEG. → out, or None if nothing loaded."""
+def overview_sheet(blocks, out, cols=6, tile=110):
+    """Every cluster on ONE labelled image — the thing a person actually looks at.
+
+    blocks: [(title, [crop paths])].
+
+    Not one file per cluster. macOS `open` on a second image either refocuses the window
+    Preview already has up or adds a background tab, so eleven separate sheets all showed
+    cluster 1: on 2026-08-17 the cat, the raccoon, the stone trough, the watering can and
+    two patches of empty pavement all appeared to be hedgehogs. One sheet, opened once,
+    has no window-management failure mode to get wrong.
+    """
+    import cv2
+    made = []
+    for title, paths in blocks:
+        row = contact_sheet(paths, None, cols=cols, tile=tile, limit=cols)
+        if row is None:
+            continue
+        row = cv2.copyMakeBorder(row, 24, 6, 6, 6, cv2.BORDER_CONSTANT, value=(30, 30, 30))
+        cv2.putText(row, title, (8, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        made.append(row)
+    if not made:
+        return None
+    w = max(r.shape[1] for r in made)
+    made = [cv2.copyMakeBorder(r, 0, 0, 0, w - r.shape[1], cv2.BORDER_CONSTANT,
+                               value=(30, 30, 30)) for r in made]
+    # Two columns, so twenty clusters still fit on a screen rather than scrolling.
+    half = (len(made) + 1) // 2
+    left, right = cv2.vconcat(made[:half]), None
+    if made[half:]:
+        right = cv2.vconcat(made[half:])
+        h = max(left.shape[0], right.shape[0])
+        left = cv2.copyMakeBorder(left, 0, h - left.shape[0], 0, 0, cv2.BORDER_CONSTANT,
+                                  value=(30, 30, 30))
+        right = cv2.copyMakeBorder(right, 0, h - right.shape[0], 0, 8, cv2.BORDER_CONSTANT,
+                                   value=(30, 30, 30))
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    cv2.imwrite(out, cv2.hconcat([left, right]) if right is not None else left)
+    return out
+
+
+def contact_sheet(paths, out, cols=6, tile=180, limit=None):
+    """Montage crops into one image. → the image (and writes `out`, if given)."""
     import cv2
     tiles = []
-    for p in paths[:cols * 5]:                       # 30 crops is plenty to judge by
+    for p in paths[:limit or cols * 5]:               # 30 crops is plenty to judge by
         im = cv2.imread(p)
         if im is None:
             continue
@@ -138,10 +175,11 @@ def contact_sheet(paths, out, cols=6, tile=180):
     rows = [tiles[i:i + cols] for i in range(0, len(tiles), cols)]
     blank = np.full_like(tiles[0], 20)
     rows[-1] += [blank] * (cols - len(rows[-1]))
-    import cv2 as _cv
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    _cv.imwrite(out, _cv.vconcat([_cv.hconcat(r) for r in rows]))
-    return out
+    sheet = cv2.vconcat([cv2.hconcat(r) for r in rows])
+    if out:
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        cv2.imwrite(out, sheet)
+    return sheet
 
 
 def load_refs():
@@ -167,6 +205,9 @@ def main():
     ap.add_argument("--min-cos", type=float, default=MIN_COS,
                     help=f"how alike two crops must be to group (default {MIN_COS})")
     ap.add_argument("--review", action="store_true", help="show existing labels and stop")
+    ap.add_argument("--set", metavar="N=LABEL,…",
+                    help="label whole clusters by number without prompting, e.g. "
+                         "--set 1=hedgehog,2=cat,5=_drop")
     ap.add_argument("--relabel", action="store_true", help="ask again about labelled crops")
     args = ap.parse_args()
 
@@ -208,42 +249,73 @@ def main():
     rows = [(f, l, by_file.get(f, e)) for f, l, e in rows]
 
     crops_dir = os.path.join(BASE, "gallery", "animals")
-    for old in glob.glob(os.path.join(SHEET_DIR, SHEET_GLOB)):
-        os.remove(old)                       # last run's sheets, so stale ones cannot be
-    stopped = False                          # mistaken for this run's
-    for k in range(n_clusters):
-        idx = [keep[j] for j in np.flatnonzero(lab == k)]
-        files = [metas[i].get("file") for i in idx]
+    members = {k: [keep[j] for j in np.flatnonzero(lab == k)] for k in range(n_clusters)}
+
+    def describe(k):
+        idx = members[k]
         events = sorted({metas[i].get("event", "live") for i in idx})
         tops = sorted({metas[i].get("top", "?") for i in idx})
-        sheet = contact_sheet([os.path.join(crops_dir, f) for f in files if f],
-                              os.path.join(SHEET_DIR, f"_cluster_{k + 1:02d}.jpg"))
-        print(f"--- cluster {k + 1}/{n_clusters}: {len(idx)} crop(s)")
-        print(f"    from: {', '.join(events[:4])}{' …' if len(events) > 4 else ''}")
-        print(f"    speciesnet said: {', '.join(tops[:5])}")
-        if sheet:
-            print(f"    sheet: {sheet}")
-            # Only when someone is actually there to look: a piped run should not
-            # scatter eleven Preview windows across the desktop.
-            if sys.platform == "darwin" and sys.stdin.isatty():
-                subprocess.run(["open", sheet], check=False)
-        try:
-            ans = input("    name (or s=skip, d=drop, q=quit): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n    stopping")
-            stopped = True
-            break
-        if ans == "q":
-            stopped = True
-            break
-        if ans in ("", "s"):
-            continue
-        label = "_drop" if ans == "d" else ans.lower()
-        for i in idx:
+        return (f"cluster {k + 1}: {len(idx)} crop(s)",
+                f"    from: {', '.join(events[:3])}{' …' if len(events) > 3 else ''}",
+                f"    speciesnet said: {', '.join(tops[:4])}")
+
+    def apply(k, label):
+        for i in members[k]:
             f = metas[i].get("file")
             if f:
                 rows.append((f, label, embs[i]))
-        print(f"    -> {len(idx)} crop(s) labelled {label!r}")
+        return len(members[k])
+
+    # One sheet with every cluster on it, opened once — see overview_sheet().
+    sheet = overview_sheet([(f"cluster {k + 1}: {len(members[k])} crops",
+                             [os.path.join(crops_dir, metas[i]["file"])
+                              for i in members[k] if metas[i].get("file")])
+                            for k in range(n_clusters)], SHEET)
+
+    if args.set:
+        # Non-interactive: label whole clusters by number, e.g. --set 1=hedgehog,5=_drop
+        chosen = {}
+        for part in args.set.split(","):
+            if "=" not in part:
+                sys.exit(f"--set wants cluster=label pairs, got {part!r}")
+            num, name = part.split("=", 1)
+            try:
+                k = int(num.strip()) - 1
+            except ValueError:
+                sys.exit(f"--set cluster numbers must be integers, got {num!r}")
+            if not 0 <= k < n_clusters:
+                sys.exit(f"--set: cluster {num.strip()} does not exist "
+                         f"(there are {n_clusters})")
+            chosen[k] = name.strip().lower()
+        for k in sorted(chosen):
+            n = apply(k, chosen[k])
+            print(f"cluster {k + 1}: {n:>3} crop(s) -> {chosen[k]!r}")
+        for k in range(n_clusters):
+            if k not in chosen:
+                print(f"cluster {k + 1}: {len(members[k]):>3} crop(s) left unlabelled")
+        stopped = False
+    else:
+        if sheet:
+            print(f"all {n_clusters} clusters on one sheet: {sheet}\n")
+            if sys.platform == "darwin" and sys.stdin.isatty():
+                subprocess.run(["open", sheet], check=False)
+        stopped = False
+        for k in range(n_clusters):
+            for line in describe(k):
+                print(line)
+            try:
+                ans = input("    name (or s=skip, d=drop, q=quit): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n    stopping")
+                stopped = True
+                break
+            if ans == "q":
+                stopped = True
+                break
+            if ans in ("", "s"):
+                continue
+            label = "_drop" if ans == "d" else ans.lower()
+            print(f"    -> {apply(k, label)} crop(s) labelled {label!r}")
 
     save_refs(rows)
     named = [r for r in rows if r[1] != "_drop"]
