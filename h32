@@ -184,7 +184,13 @@ probe() {
 }
 
 stop() {
-  pkill -f "$BIN -config $CFG" && echo "h32: stopped" || echo "h32: was not running"
+  # Match on the config FILE, not the full absolute command line. A go2rtc started by
+  # hand from this directory runs as `./go2rtc -config ./go2rtc.yaml`, which the
+  # absolute-path pattern never matched — so `h32 restart` silently left the old process
+  # running and the app kept using whatever local.env said when THAT one started. The
+  # symptom is a camera whose address you have already corrected still being dialled at
+  # its old one.
+  pkill -f "go2rtc.*${CFG:t}" && echo "h32: stopped" || echo "h32: was not running"
 }
 
 status() {
