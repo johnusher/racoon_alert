@@ -153,9 +153,14 @@ class Verdict:
         This is the promote side of the veto, and the answer to a failure the movement
         gate cannot fix on its own: a person who walks out and STANDS STILL never
         displaces their box, so scenery.py holds them back as unproven for ever (see
-        the 22:48 friend in test_scenery.py). Furniture cannot sneak in this way — the
-        bench, the rock, the plant pot and the orange bucket all read `blank` 0.92-1.00,
-        which is neither a human nor a named species.
+        the 22:48 friend in test_scenery.py).
+
+        What keeps furniture out is `species` being a SPECIES. It is not enough for the
+        classifier to dislike the crop: the bench, the rock, the plant pot and the
+        orange bucket read `blank` 0.92-1.00, but the stone trough on 2026-08-17 read
+        `bird` 0.49-0.72 — and `bird` is the class-level roll-up, so counting it as an
+        identification promoted a garden trough past the movement gate twelve times.
+        A roll-up is not a recognition; see SpeciesRules.is_species.
         """
         return bool(self.is_human or self.species)
 

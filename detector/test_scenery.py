@@ -461,6 +461,22 @@ check("a confident detection still overrides a QUIET anchor (section 4 unchanged
 check("a real person walking through is still confirmed", len(replay(fresh(), PERSON)) >= 20)
 check("the raccoon is still confirmed", len(replay(fresh(), RACCOON)) >= 1)
 
+# …but a spot whose OWN confidence reaches 0.80 cannot be overridden by a global bar,
+# or the furniture holds the override for ever — which is what kept the trough firing
+# even after it was learned. A confident detection there is referred to SpeciesNet
+# instead: it must arrive as UNPROVEN, the one state detect.py hands to promote_unproven.
+conf, unp, sup = f.apply([("person", 0.80, [1256, 566, 1653, 1073])], now=14 * 60)
+check("a confident detection at learned furniture does not fire on its own",
+      not conf, f"{len(conf)} confirmed")
+check("…and is not silently binned either — it is left for SpeciesNet to arbitrate",
+      len(unp) == 1 and not sup, f"{len(unp)} unproven, {len(sup)} suppressed")
+# The quiet furniture is still dropped outright, rather than sent to the classifier
+# three times a second: promote_unproven is the one place SpeciesNet runs outside an
+# event, and it costs ~140ms a call.
+conf, unp, sup = f.apply([("person", 0.33, [1260, 567, 1654, 1074])], now=14 * 60 + 1)
+check("quiet furniture is still suppressed outright, not referred",
+      len(sup) == 1 and not unp and not conf, f"{len(unp)} unproven, {len(sup)} suppressed")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")

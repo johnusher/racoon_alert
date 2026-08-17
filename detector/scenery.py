@@ -265,9 +265,21 @@ class SceneryFilter:
             self._dirty = True
 
             certain = conf >= self.conf_certain
-            if anchor["static"] and not certain and conf <= anchor["static_conf"] + self.conf_override:
+            if anchor["static"] and conf <= anchor["static_conf"] + self.conf_override:
                 self._settle(anchor, box, moved=False)   # keep learning where it rests
-                suppressed.append((cls, conf, box, "scenery"))
+                if certain:
+                    # Confident — but at a spot already written off as furniture, and a
+                    # global confidence bar cannot arbitrate that: MegaDetector holds
+                    # 0.69-0.80 on the stone trough it has been wrong about all morning,
+                    # so `certain` alone handed that furniture a permanent override and
+                    # it kept firing even once learned. Neither act on it nor bin it —
+                    # leave it unproven, which is the one state detect.py refers to
+                    # SpeciesNet (promote_unproven). That fires on a human or a named
+                    # species and on nothing else, so a person who really is standing at
+                    # the trough is still announced while the trough itself is not.
+                    unproven.append((cls, conf, box))
+                else:
+                    suppressed.append((cls, conf, box, "scenery"))
                 continue
 
             track = self._match_track(cls, box, now)
