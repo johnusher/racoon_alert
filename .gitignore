@@ -49,6 +49,9 @@ detector/gallery/
 
 # trained species reference embeddings (training data, grows)
 detector/species_refs.npz
+# labelled animal references from label_animals.py — embeddings of this garden's own
+# crops, site-specific and growing, and derived from the gitignored gallery above
+detector/animal_refs.npz
 detector/overnight.log
 
 # cached inference from detector/imgsz_sweep.py — regenerable, one JSON per clip

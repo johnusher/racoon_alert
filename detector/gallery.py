@@ -95,6 +95,19 @@ class Gallery:
                 return True
         return False
 
+    def ready(self, kind, now=None):
+        """Would add() get past the rate limit right now?
+
+        Lets a caller skip work it would only throw away. The animal harvest runs at the
+        detection rate but saves at most one crop per min_gap_secs, while the embedding
+        that makes a crop worth keeping costs a ~140ms SpeciesNet pass — so detect.py
+        asks this first and pays that at the SAVE rate rather than at 3 fps.
+
+        Only the rate limit; the near-duplicate check needs the embedding to answer.
+        """
+        now = time.time() if now is None else now
+        return now - self._last_add.get(kind, -1e9) >= self.min_gap_secs
+
     def add(self, kind, crop_bgr, meta=None, embedding=None, now=None):
         """Save one crop if it passes the rate limit and the dedup check. Returns the
         saved filename, or None if skipped. `crop_bgr` is a BGR uint8 image."""

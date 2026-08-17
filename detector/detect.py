@@ -550,10 +550,25 @@ try:
             for aligned, emb, name in getattr(faces, "harvest", []):
                 gallery.add("face", aligned, {"who": name}, embedding=emb, now=t)
             for c, cf, box in confirmed:
-                if c == "animal":
+                # ready() first: the harvest sees every frame but saves one crop per
+                # min_gap_secs, and the embedding below costs a ~140ms SpeciesNet pass.
+                if c == "animal" and gallery.ready("animal", t):
                     a = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
                     if a.size:
-                        gallery.add("animal", a, {"conf": round(cf, 2), "box": box}, now=t)
+                        # Bank the pooled feature with the crop. This is what makes the
+                        # crop usable for a species SpeciesNet cannot name at all — the
+                        # 03:42 hedgehog scores `western european hedgehog` 0.0001
+                        # against `blank` 0.9, so recognition has to come from matching
+                        # this vector against labelled crops. See harvest_refs.py.
+                        emb = None
+                        if species_on:
+                            try:
+                                v = species.classify(a, embed=True)
+                                emb = v.embedding if v is not None else None
+                            except Exception as e:                # never take detection
+                                log(f"gallery embed: FAILED {e}")  # down over a harvest
+                        gallery.add("animal", a, {"conf": round(cf, 2), "box": box},
+                                    embedding=emb, now=t)
         recording = t < record_until
         banner = interesting[0][0].upper() if (recording and interesting) else None
         with LK:

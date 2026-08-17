@@ -121,13 +121,17 @@ class Verdict:
     the classifier has no opinion, and the caller must keep whatever it already believed.
     """
 
-    __slots__ = ("human_p", "blank_p", "top_label", "top_p", "species", "is_human", "not_human")
+    __slots__ = ("human_p", "blank_p", "top_label", "top_p", "species", "is_human",
+                 "not_human", "embedding")
 
-    def __init__(self, human_p, blank_p, top_label, top_p, species, is_human, not_human):
+    def __init__(self, human_p, blank_p, top_label, top_p, species, is_human, not_human,
+                 embedding=None):
         self.human_p, self.blank_p = human_p, blank_p
         self.top_label, self.top_p = top_label, top_p
         self.species = species
         self.is_human, self.not_human = is_human, not_human
+        # The 1280-d pooled feature, when the caller asked for it. See probs_and_embedding.
+        self.embedding = embedding
 
     @property
     def is_blank(self):
@@ -210,7 +214,7 @@ class SpeciesRules:
         parts = label.split()
         return not parts or parts[-1] not in RANK_SUFFIXES
 
-    def verdict(self, probs):
+    def verdict(self, probs, embedding=None):
         probs = np.asarray(probs, np.float32).ravel()
         human_p = float(probs[self._i_human]) if self._i_human >= 0 else 0.0
         blank_p = float(probs[self._i_blank]) if self._i_blank >= 0 else 0.0
@@ -223,7 +227,8 @@ class SpeciesRules:
         known = self._i_human >= 0
         return Verdict(human_p, blank_p, top_label, top_p, species,
                        is_human=known and human_p >= self.human_min,
-                       not_human=known and human_p < self.human_veto)
+                       not_human=known and human_p < self.human_veto,
+                       embedding=embedding)
 
 
 def _label_name(parts):
@@ -276,6 +281,7 @@ class SpeciesNetClassifier:
                                   species_labels=load_species_names(labels_path)) \
             if self.labels else None
         self._model = None
+        self._feature_mod = None
 
     @property
     def available(self):
@@ -297,11 +303,23 @@ class SpeciesNetClassifier:
         self._model = (model.eval(), dev, torch)
 
     def probs(self, crop_bgr):
-        """Softmax over all classes for one BGR crop.
+        """Softmax over all classes for one BGR crop."""
+        return self.probs_and_embedding(crop_bgr, embed=False)[0]
+
+    def probs_and_embedding(self, crop_bgr, embed=True):
+        """→ (softmax over all classes, 1280-d pooled feature or None) for one BGR crop.
 
         Preprocessing follows SpeciesNet's published recipe exactly, including the
         float->resize->uint8 round trip and antialias=False: it is not the obvious
         pipeline, and getting it wrong quietly costs accuracy rather than erroring.
+
+        The embedding is the input to the final dense layer, read off the same forward
+        pass by a hook — so it costs nothing beyond the classification we already ran,
+        and cannot perturb it. It exists because the classifier HEAD is not always
+        usable: a night-IR hedgehog scores `western european hedgehog` 0.0001 against
+        `blank` 0.9 (measured 2026-08-17), while the feature underneath is still a
+        descriptor trained on 65M camera-trap images. Species this model cannot name
+        get recognised by matching that feature against crops labelled here instead.
         """
         import cv2
         import torchvision.transforms.functional as TF
@@ -314,16 +332,47 @@ class SpeciesNetClassifier:
         t = TF.convert_image_dtype(t, torch.uint8)
         arr = t.permute(1, 2, 0).numpy().astype("float32") / 255.0   # NHWC, [0,1]
         x = torch.from_numpy(arr).unsqueeze(0).to(dev)
-        with torch.no_grad():
-            out = model(x)
+        feat, handle = [], None
+        if embed:
+            handle = self._feature_module().register_forward_hook(
+                lambda _m, _i, out: feat.append(out.detach()))
+        try:
+            with torch.no_grad():
+                out = model(x)
+        finally:
+            if handle is not None:
+                handle.remove()
         out = out[0] if isinstance(out, (tuple, list)) else out
-        return torch.softmax(out, dim=1)[0].cpu().numpy()
+        probs = torch.softmax(out, dim=1)[0].cpu().numpy()
+        emb = feat[0].reshape(-1).cpu().numpy().astype("float32") if feat else None
+        return probs, emb
 
-    def classify(self, crop_bgr):
-        """→ Verdict, or None if the crop is empty."""
+    def _feature_module(self):
+        """The squeeze whose output feeds SpeciesNet/dense/MatMul — the pooled feature.
+
+        Located by walking the graph rather than by hard-coded name, because the ONNX
+        export numbers that node (`..._Squeeze__3825`) and a re-export would renumber it.
+        """
+        if self._feature_mod is not None:
+            return self._feature_mod
+        model = self._model[0]
+        nodes = list(model.graph.nodes)
+        dense = next(n for n in nodes if str(n.target).endswith("dense/MatMul"))
+        src = next(a for a in dense.args if hasattr(a, "op") and a.op == "call_module")
+        self._feature_mod = model.get_submodule(str(src.target))
+        return self._feature_mod
+
+    def classify(self, crop_bgr, embed=False):
+        """→ Verdict, or None if the crop is empty.
+
+        embed=True also carries back the pooled feature, off the same forward pass, for
+        the crops we are banking as references. Off by default: the live detector wants
+        the verdict and nothing else.
+        """
         if crop_bgr is None or not getattr(crop_bgr, "size", 0):
             return None
-        return self.rules.verdict(self.probs(crop_bgr))
+        probs, emb = self.probs_and_embedding(crop_bgr, embed=embed)
+        return self.rules.verdict(probs, embedding=emb)
 
     def describe(self):
         if not os.path.exists(self.model_path):

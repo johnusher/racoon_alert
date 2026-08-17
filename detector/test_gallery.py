@@ -85,6 +85,21 @@ with tempfile.TemporaryDirectory() as d:
     check("embeddings come back as an (n, dim) array", embs.shape == (1, 128), str(embs.shape))
     check("and stay unit-length", abs(np.linalg.norm(embs[0]) - 1.0) < 1e-3)
 
+    print("\n7. ready() — so a caller can skip an embedding add() would only discard")
+    # The animal harvest runs at the detection rate (3 fps) but saves at most one crop
+    # per min_gap_secs, and the embedding that makes a crop useful costs a ~140ms
+    # SpeciesNet pass. ready() is how detect.py pays that at the SAVE rate instead.
+    g7 = Gallery(d + "/h", min_gap_secs=15, dedup_cos=1.1, max_per_kind=100)
+    check("a cold gallery is ready", g7.ready("animal", now=100.0))
+    g7.add("animal", crop(), {"i": 0}, now=100.0)
+    check("…and not ready again inside the gap", not g7.ready("animal", now=110.0))
+    check("…but ready once the gap has passed", g7.ready("animal", now=115.0))
+    check("the gap is per kind", g7.ready("face", now=110.0))
+    # ready() must not lie: if it says yes, add() must actually save (dedup aside).
+    check("ready() agreeing means add() saves",
+          bool(g7.add("animal", crop(), {"i": 1}, now=115.0)))
+    check("a skipped add leaves the clock alone", not g7.ready("animal", now=120.0))
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")

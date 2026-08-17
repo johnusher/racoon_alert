@@ -204,6 +204,42 @@ check("a human is NOT blank", not v.is_blank)
 v = R.verdict(p(blank=0.48, domestic_cat=0.30))
 check("blank on top at low confidence still reads blank", v.is_blank, repr(v))
 
+print("\n15. the crop embedding — for the species SpeciesNet cannot name at all")
+# Measured 2026-08-17 on the hedgehog in 20260817_034249_animal.mp4: SpeciesNet scores
+# `western european hedgehog` at 0.00004-0.00012 while `blank` takes 0.51-0.96, and no
+# amount of padding, CLAHE, gamma, 4x upscale or full-frame input moves it — its top
+# guesses are all New World species. The classifier head cannot name a night-IR hedgehog
+# on this camera, but the 1280-d pooled feature underneath it is still a wildlife-domain
+# descriptor, and it comes out of the SAME forward pass. That is what the local
+# reference matcher will be built on; this section only checks the accessor.
+_model_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "models", "speciesnet_crop_4.0.1a.pt")
+if os.path.exists(_model_file):
+    from speciesnet import SpeciesNetClassifier
+    sn = SpeciesNetClassifier(_model_file, _labels_file)
+    rng = np.random.default_rng(0)
+    crop = rng.integers(0, 255, (140, 240, 3), dtype=np.uint8)
+    plain = sn.classify(crop)
+    check("no embedding unless asked for", plain.embedding is None)
+    emb = sn.classify(crop, embed=True)
+    check("asking gives one", emb.embedding is not None)
+    check("it is the 1280-d EfficientNetV2-M pooled feature",
+          getattr(emb.embedding, "shape", None) == (1280,), str(getattr(emb.embedding, "shape", None)))
+    check("it is finite", bool(np.all(np.isfinite(emb.embedding))))
+    check("it is not all zeros", float(np.abs(emb.embedding).sum()) > 0)
+    # Same forward pass: asking for the feature must not perturb the verdict, or the
+    # promote/veto decisions would silently depend on whether we harvested.
+    check("the verdict is identical either way",
+          plain.top_label == emb.top_label and abs(plain.top_p - emb.top_p) < 1e-6,
+          f"{plain.top_label}={plain.top_p:.4f} vs {emb.top_label}={emb.top_p:.4f}")
+    check("…including P(human), which the veto turns on",
+          abs(plain.human_p - emb.human_p) < 1e-6)
+    # Cosine is the comparison the matcher will use, so the vector has to survive it.
+    a = emb.embedding / np.linalg.norm(emb.embedding)
+    check("it unit-normalises without blowing up", abs(float(a @ a) - 1.0) < 1e-4)
+else:
+    print("  SKIP  weights absent — detector/get-speciesnet.sh")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILED: {', '.join(FAILS)}")

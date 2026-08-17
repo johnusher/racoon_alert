@@ -140,10 +140,32 @@ feeding two learners.
   ⚠️ **The 2yo from a high night-IR fisheye is at/past the edge of face recognition** — may
   only ever resolve to "a small child". **Person-box height** is a free coarse size prior
   (adult vs 6yo vs 2yo) for when no face is visible — worth adding to the harvest metadata.
-- ⏭ **Better species over time:** the night/day-lighting confound is gone (SpeciesNet
-  replaced the CLIP refs), so the harvested crops are no longer needed to *fix* the
-  classifier — they are now for the thing SpeciesNet cannot do: **individual-cat ID**
-  (our black cat vs the neighbours'), which stays a CLIP/embedding job.
+- ⚠️ **SpeciesNet cannot name the hedgehog — measured 2026-08-17.** It reads the 03:42
+  visitor (`20260817_034249_animal.mp4`) as `blank` 0.51–0.96 while
+  `western european hedgehog` scores **0.00004–0.00012**. Tried and did not help: tight /
+  +50% / +150% / +400% crop padding, raw / CLAHE / gamma 0.5 / histogram-equalised /
+  4× upscaled crops, and the full frame. Its top guesses are all New World species
+  (virginia opossum, central american agouti, white-lipped peccary) — the head does not
+  cover a night-IR European hedgehog on this camera, and **no threshold reaches it**.
+  So the harvested crops ARE needed to fix the classifier after all, for the species it
+  misses outright — this reverses the note that used to sit here.
+- ⏭ **Local reference matching (harvest + label BUILT 2026-08-17, matcher NOT yet):**
+  `speciesnet.py` now returns the 1280-d pooled feature off the same forward pass (free);
+  `harvest_refs.py` mines it out of the saved clips; `label_animals.py` clusters and names
+  them into `animal_refs.npz`. Measured on the first 37 crops: **12/13 hedgehog crops have
+  another hedgehog as nearest neighbour**, and at `cos>=0.55` they form one pure cluster of
+  12 — so retrieval works even though the classifier head does not. Still to do:
+  - the matcher itself (threshold, margin, cross-frame voting like `faces.py`), then
+    `HEDGEHOG` into `email.trigger_on`;
+  - ⚠️ **only ONE hedgehog event exists so far**, so cross-event generalisation is
+    UNTESTED — the whole risk is that it keys on the paving, not the animal;
+  - the acceptance test that killed `species.py`: empty pavement, the bench, the trough
+    and the plant pot must NOT match, and leave-one-out must be run night-vs-night only.
+    The one bad neighbour already seen was an elongated partial crop matching the empty
+    pavement of `20260817_040814` at cos 0.933 — exactly that failure mode. Label such
+    crops `d` (drop) so they become negatives rather than references.
+- ⏭ **Individual-cat ID** (our black cat vs the neighbours') stays an embedding job too,
+  and now shares the same harvest/label pipeline.
 - ⚠️ Everything harvested is real people's biometrics incl. children → gitignored, local only.
 
 ## 2. Identifying particular people — BUILT, one measurement still missing
