@@ -149,7 +149,23 @@ feeding two learners.
   cover a night-IR European hedgehog on this camera, and **no threshold reaches it**.
   So the harvested crops ARE needed to fix the classifier after all, for the species it
   misses outright — this reverses the note that used to sit here.
-- ⏭ **Local reference matching (harvest + label BUILT 2026-08-17, matcher NOT yet):**
+- ✅ **Local reference matching (BUILT 2026-08-17, live):** `animal_match.py`, wired into
+  `verify_species` and on by default (`species.local_refs`). When SpeciesNet names
+  nothing, the crop's feature is matched against `animal_refs.npz`; `HEDGEHOG` is in
+  `email.trigger_on`. Threshold 0.60 is measured — same animal on a DIFFERENT night runs
+  cosine mean 0.518, different things max out at 0.552, so 0.60 clears the whole observed
+  negative range; per-frame that names ~50% of cross-visit crops with nothing wrong (0.55
+  gets 75% but calls a PERSON a raccoon; 0.70 names nothing). **Expect about half of
+  visits to be named, not all.** Verified end to end: the 03:42 clip tags HEDGEHOG, the
+  trough clips stay a generic ANIMAL (0/38 and 0/10 crops named), and no person crop is
+  named as an animal. The negatives do that work, not the threshold — furniture/empty/
+  person are references too, and a crop nearest to one of those is never named.
+  - ⚠️ **STILL only one hedgehog visit.** Every number above comes from cat/raccoon/person
+    (two visits each); the hedgehog's own cross-visit behaviour is UNMEASURED. Re-measure
+    after the next visit — `h32 harvest && h32 label`, then re-run the threshold sweep.
+  - ⚠️ Cluster 11 of the first labelling (`20260817_035833`, box clipped at x2=1919) was
+    left unlabelled: it could be an animal or a shadow. Decide it when there is a better view.
+- ⏭ **Superseded note — the pre-matcher plan (harvest + label, BUILT 2026-08-17):**
   `speciesnet.py` now returns the 1280-d pooled feature off the same forward pass (free);
   `harvest_refs.py` mines it out of the saved clips; `label_animals.py` clusters and names
   them into `animal_refs.npz`. Measured on the first 37 crops: **12/13 hedgehog crops have

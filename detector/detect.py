@@ -27,6 +27,7 @@ from scenery import SceneryFilter
 from faces import FaceIdentifier
 from gallery import Gallery
 from speciesnet import SpeciesNetClassifier, short_name
+from animal_match import AnimalMatcher
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
@@ -95,6 +96,15 @@ verify_person = spc.get("verify_person", True) and species_on
 promote_on = spc.get("promote_unproven", True) and species_on
 promote_gap = spc.get("promote_gap_secs", 5.0)
 _promote_at = 0.0
+
+# ---- local references: name the animals SpeciesNet cannot (see animal_match.py) ----
+lrc = spc.get("local_refs", {})
+matcher = AnimalMatcher(os.path.join(BASE, lrc.get("path", "animal_refs.npz")),
+                        threshold=lrc.get("threshold", 0.60),
+                        margin=lrc.get("margin", 0.05))
+# Needs SpeciesNet loaded regardless: the feature it matches on comes off that same
+# forward pass, so with the classifier off there is nothing to compare.
+matcher_on = lrc.get("enabled", True) and species_on and matcher.available
 
 # ---- crop harvester: collect faces + animal crops to learn from later ----
 gc = cfg.get("gallery", {})
@@ -294,7 +304,7 @@ def verify_species(img, dets, max_crops=4):
             out.append((c, cf, box)); continue
         crop = img[max(0, box[1]):box[3], max(0, box[0]):box[2]]
         try:
-            v = species.classify(crop)
+            v = species.classify(crop, embed=matcher_on)
         except Exception as e:                            # never let the classifier
             log(f"speciesnet: FAILED {e}")                # take the detector down
             out.append((c, cf, box)); continue
@@ -313,8 +323,19 @@ def verify_species(img, dets, max_crops=4):
         if empty:
             continue
         out.append(("animal" if overruled else c, cf, box))
-        if species_label is None and v.species and (overruled or c == "animal"):
-            species_label = v.species
+        if species_label is None and (overruled or c == "animal"):
+            if v.species:
+                species_label = v.species
+            elif matcher_on and v.embedding is not None:
+                # SpeciesNet had no name for it. Ask this garden's own labelled crops —
+                # that is the only way a hedgehog is ever named here, since the
+                # classifier scores it 0.0001 against blank 0.9. A crop whose nearest
+                # reference is furniture, pavement or a person is NOT named: the veto
+                # lives in AnimalMatcher.match, not out here.
+                name, score, gap = matcher.match(v.embedding)
+                if name:
+                    species_label = name
+                    notes.append(f"local[{name} cos={score:.2f} gap={gap:.2f}]")
     return out, species_label, " ".join(notes)
 
 
@@ -483,6 +504,7 @@ print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
 print(f"    species: {'on' if species_on else 'off'} — {species.describe()}"
       + ("   (may OVERRULE a MegaDetector 'person')" if verify_person else ""))
+print(f"    local refs: {'on' if matcher_on else 'off'} — {matcher.describe()}")
 print(f"    switches: media recording {'ON' if monitor.auto_record else 'OFF'}, "
       f"email alerts {'ON' if monitor.email_alerts else ('OFF' if monitor.email_available else 'not configured')}"
       f"  — both flippable live on the monitor")

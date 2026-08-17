@@ -191,12 +191,13 @@ def load_refs():
 
 
 def save_refs(rows):
-    """rows: [(file, label, embedding)] → animal_refs.npz."""
-    np.savez(REFS,
-             files=np.array([r[0] for r in rows], dtype=object),
-             labels=np.array([r[1] for r in rows], dtype=object),
-             embs=np.stack([unit(r[2]) for r in rows]).astype(np.float32)
-             if rows else np.zeros((0, 0), np.float32))
+    """rows: [(file, label, embedding)] → animal_refs.npz.
+
+    The writer lives in animal_match beside the reader, so the file this tool produces
+    and the file the detector loads cannot drift apart.
+    """
+    from animal_match import save_refs as _save
+    _save(REFS, rows)
 
 
 def main():
