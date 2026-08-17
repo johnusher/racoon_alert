@@ -12,6 +12,8 @@
 #   h32 detect stop         stop a running detector (incl. a detached one) and exit
 #   h32 say <text> speak text through the camera's speaker (German voice Anna)
 #   h32 play <f.wav>   play a wav file through the camera's speaker
+#   h32 harvest    mine the saved clips for animal crops + SpeciesNet embeddings
+#   h32 label      cluster those crops and name them (hedgehog, cat, …)
 #
 # The app is a self-contained local web app (go2rtc -> WebRTC) at http://127.0.0.1:1984/
 
@@ -102,5 +104,7 @@ case "${1:-start}" in
   detect)   shift; detect "$@" ;;
   say)      shift; "$VENV/bin/python" "$DIR/talk.py" --say "$*" --voice Anna ;;
   play)     shift; "$VENV/bin/python" "$DIR/talk.py" "$@" ;;
-  *)        echo "usage: h32 [start|stop|restart|status|log|detect|say|play]" ;;
+  harvest)  shift; "$VENV/bin/python" "$DIR/detector/harvest_refs.py" "$@" ;;
+  label)    shift; "$VENV/bin/python" "$DIR/detector/label_animals.py" "$@" ;;
+  *)        echo "usage: h32 [start|stop|restart|status|log|detect|say|play|harvest|label]" ;;
 esac

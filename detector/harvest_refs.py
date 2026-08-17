@@ -60,12 +60,16 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="report, bank nothing")
     args = ap.parse_args()
 
-    import cv2
-    import torch
-    import h32env
-    from ultralytics import YOLO
-    from gallery import Gallery
-    from speciesnet import SpeciesNetClassifier
+    try:
+        import cv2
+        import torch
+        import h32env
+        from ultralytics import YOLO
+        from gallery import Gallery
+        from speciesnet import SpeciesNetClassifier
+    except ModuleNotFoundError:              # the shebang finds system python, which has
+        sys.exit("this needs the project venv — run it as:  h32 harvest\n"   # none of ours
+                 "                       or:  ./.venv/bin/python detector/harvest_refs.py")
 
     cfg = h32env.detector_config(os.path.join(BASE, "config.json"))
     spc = cfg.get("species", {})

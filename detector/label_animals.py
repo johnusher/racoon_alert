@@ -39,7 +39,11 @@ import os
 import subprocess
 import sys
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:                  # the shebang finds system python, which has
+    sys.exit("this needs the project venv — run it as:  h32 label\n"      # none of our deps
+             "                       or:  ./.venv/bin/python detector/label_animals.py")
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)

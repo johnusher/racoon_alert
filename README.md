@@ -238,6 +238,22 @@ and handles SIGTERM too; without that, a detached detector could only ever be fo
   one-shot) and for growing the species classifier. ⚠️ Children's biometrics: `detector/gallery/`
   is gitignored and local-only. *(Next: a cluster-and-label tool that turns harvested faces
   into named enrolments — see `TODO.md`.)*
+- **Naming what SpeciesNet can't (`harvest_refs.py` + `label_animals.py`):** SpeciesNet names
+  the raccoon and the cat, but not the hedgehog — it reads the 03:42 visitor of 2026-08-17 as
+  `blank` 0.51–0.96 while `western european hedgehog` scores 0.0001, and no padding, contrast
+  or upscale changes that. So each animal crop also banks the 1280-d feature from *underneath*
+  SpeciesNet's classifier head, which comes off the same forward pass for free:
+
+  ```
+  h32 harvest        # mine crop + embedding out of every saved clip (retroactive)
+  h32 label          # cluster them, contact sheet per cluster, name them
+  h32 label --review # what's labelled so far
+  ```
+
+  12 of 13 hedgehog crops have another hedgehog as nearest neighbour, so retrieval works where
+  the classifier head does not. The matcher that would turn that into a `HEDGEHOG` tag is *not*
+  built yet — only one hedgehog night exists, so it would be untested against the background-keying
+  failure that retired `species.py`. See `TODO.md`.
 - **Recording:** `recorder.py` keeps a rolling ~120s circular buffer of 2s segments (video
   copy + AAC audio) from go2rtc's RTSP restream; on an event it assembles
   `[trigger-preroll … trigger+postroll]` into `detector/events/<ts>_<tag>.mp4`.
