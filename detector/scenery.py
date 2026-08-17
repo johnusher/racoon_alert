@@ -28,8 +28,9 @@ So two gates, either of which alone would have killed every false event of that 
 
   scenery memory a location that keeps producing detections that never move becomes
                  furniture, and is then suppressed outright. Remembered across
-                 restarts, forgotten once it stops being confirmed, and never applied
-                 to a spot where something has genuinely moved.
+                 restarts and across the day (it must survive until the next dusk —
+                 see _prune), and never applied to a spot where something has
+                 genuinely moved.
 
 Both gates step aside for a confident detection (`conf_certain`), so an unmistakable
 person is never held back, wherever they stand.
@@ -119,7 +120,8 @@ class SceneryFilter:
 
     def __init__(self, path=None, iou_match=0.60, track_iou=0.30, min_move=0.02,
                  track_gap_secs=3.0, static_after_secs=180.0, min_sightings=5,
-                 forget_secs=1800.0, conf_certain=0.70, conf_override=0.25,
+                 forget_secs=1800.0, forget_static_secs=3 * 86400.0,
+                 conf_certain=0.70, conf_override=0.25,
                  jitter_slack=2.5, jitter_learn_secs=5.0, jitter_cap=0.25,
                  home_alpha=0.05, jitter_decay=0.99, autosave_secs=60.0):
         self.path = path
@@ -134,7 +136,8 @@ class SceneryFilter:
         self.track_gap_secs = track_gap_secs
         self.static_after_secs = static_after_secs
         self.min_sightings = min_sightings
-        self.forget_secs = forget_secs
+        self.forget_secs = forget_secs                  # a spot merely noticed
+        self.forget_static_secs = forget_static_secs    # a spot written off as furniture
         self.conf_certain = conf_certain
         self.conf_override = conf_override
         self.autosave_secs = autosave_secs
@@ -199,8 +202,22 @@ class SceneryFilter:
         return best
 
     def _prune(self, now):
+        """Forget what has not been seen for a while — on two clocks.
+
+        A spot we merely noticed expires in minutes (forget_secs): it carries the
+        permissive gate and a jitter envelope measured days ago must not be what judges
+        the raccoon that turns up there next. A spot we WROTE OFF as furniture is kept
+        for days (forget_static_secs). The difference is the black kettle and the white
+        blob under the lens (2026-08-17): both are only detected under IR, so every dusk
+        they reappear after ~14 hours of nothing, and on one clock the memory of them
+        was gone by then — every evening they were fresh spots again and each fired once
+        or twice on box wobble before being re-learned. Neither clock is for ever, so a
+        repositioned camera still relearns.
+        """
         before = len(self.anchors)
-        self.anchors = [a for a in self.anchors if now - a["last_seen"] <= self.forget_secs]
+        self.anchors = [a for a in self.anchors
+                        if now - a["last_seen"] <= (self.forget_static_secs if a["static"]
+                                                    else self.forget_secs)]
         if len(self.anchors) != before:
             self._dirty = True
         self.tracks = [t for t in self.tracks

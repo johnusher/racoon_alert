@@ -189,7 +189,10 @@ and handles SIGTERM too; without that, a detached detector could only ever be fo
   because the raccoon appeared in only two frames of a 37-second clip. On top of that, a spot
   that keeps flickering without anything ever moving there is written off as scenery and
   dropped outright (drawn dashed-grey on the monitor, remembered in `detector/scenery.json`,
-  forgotten again after `forget_secs`, and never applied where something has genuinely moved).
+  kept for days once written off — `forget_static_secs` — because the black kettle and the
+  white blob under the lens only show under IR and must still be remembered at the next dusk;
+  a spot merely noticed expires after `forget_secs`; and never applied where something has
+  genuinely moved).
   A confident detection (`conf_certain`, default 0.70) skips both gates. Tune under `scenery`
   in `config.json`; `detector/test_scenery.py` replays the real recorded box sequences and
   checks the bench fires nothing while the raccoon and the person still do.

@@ -87,6 +87,7 @@ scenery = SceneryFilter(cfg["scenery_path"],
                         static_after_secs=sc.get("static_after_secs", 180),
                         min_sightings=sc.get("min_sightings", 5),
                         forget_secs=sc.get("forget_secs", 1800),
+                        forget_static_secs=sc.get("forget_static_secs", 3 * 86400),
                         conf_certain=sc.get("conf_certain", 0.70),
                         conf_override=sc.get("conf_override", 0.25))
 signal_timeout = cfg.get("signal_timeout_secs", 8)        # no frames for this long = no signal

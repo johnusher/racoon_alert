@@ -332,12 +332,31 @@ loud = [(0.0, "person", 0.84, [1215, 860, 1590, 1077])]
 check("high-confidence detection overrides the scenery anchor",
       len(replay(f, loud, t0=45 * 60)) == 1)
 
-print("\n5. scenery memory expires so a repositioned camera relearns")
-f = fresh(static_after_secs=180, min_sightings=5, forget_secs=1800)
-for minute in range(0, 40, 5):
-    replay(f, BENCH_0855, t0=minute * 60)
-f.apply([], now=45 * 60 + 3600)                       # an hour of nothing there
-check("stale anchors are forgotten", not f.anchors, f"{len(f.anchors)} left")
+print("\n5. scenery memory: a spot merely NOTICED is forgotten in minutes, a spot WRITTEN OFF survives the day")
+# Why the split (2026-08-17): the black kettle and the white blob under the lens are only
+# ever detected under IR. Every dusk they reappear after ~14 hours of nothing, and
+# forget_secs=1800 had erased them long before — so every evening they were fresh spots
+# again, on the permissive min_move, and each fired once or twice on box wobble before
+# being re-learned: three events between 20:52 and 20:55. A spot we have only just
+# noticed must still expire fast, though — it keeps the permissive gate, and jitter it
+# showed days ago must not be what holds back the raccoon that turns up there next.
+LONG = 3 * 86400
+f = fresh(static_after_secs=180, min_sightings=5, forget_secs=1800, forget_static_secs=LONG)
+replay(f, KETTLE_DUSK)                                # noticed for 21 s, never written off
+f.apply([], now=45 * 60)                              # 45 minutes of nothing there
+check("a spot merely noticed is forgotten after forget_secs", not f.anchors, f"{len(f.anchors)} left")
+f = fresh(static_after_secs=180, min_sightings=5, forget_secs=1800, forget_static_secs=LONG)
+for minute in range(0, 5):
+    replay(f, KETTLE_DUSK, t0=minute * 60)             # five minutes of dusk: written off
+check("the kettle is written off", any(a["static"] for a in f.anchors))
+dusk2 = 5 * 60 + 14 * 3600                            # the next evening
+f.apply([], now=dusk2)
+check("a written-off spot is still remembered the next evening",
+      any(a["static"] for a in f.anchors), f"{len(f.anchors)} anchors")
+check("…and still suppresses the kettle, so it does not fire again as a fresh spot",
+      len(replay(f, KETTLE_DUSK, t0=dusk2)) == 0)
+f.apply([], now=dusk2 + 4 * 86400)                    # four days of nothing there
+check("…but not for ever: a repositioned camera relearns", not f.anchors, f"{len(f.anchors)} left")
 
 print("\n6. anchors survive a detector restart")
 with tempfile.TemporaryDirectory() as d:
