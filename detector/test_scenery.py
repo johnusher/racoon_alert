@@ -232,6 +232,33 @@ FRIEND_2248 = [
 ]
 
 
+# FALSE POSITIVE — the black Weber kettle, bottom-right, after the camera was re-aimed on
+# 2026-08-17. Under IR MegaDetector reads it as `animal`; it never moves (jitter 0.022).
+# Boxes and confidences measured off 20260817_205629_animal.mp4 at dusk (~1 fps):
+KETTLE_DUSK = [
+    (0.0, "animal", 0.23, [1476, 935, 1767, 1079]),
+    (8.4, "animal", 0.22, [1475, 934, 1768, 1079]),
+    (12.1, "animal", 0.22, [1475, 934, 1768, 1079]),
+    (13.0, "animal", 0.22, [1475, 934, 1768, 1079]),
+    (15.8, "animal", 0.36, [1474, 934, 1774, 1079]),
+    (16.7, "animal", 0.36, [1474, 934, 1774, 1079]),
+    (17.6, "animal", 0.43, [1475, 934, 1769, 1079]),
+    (18.6, "animal", 0.57, [1475, 934, 1774, 1079]),
+    (20.4, "animal", 0.26, [1476, 934, 1761, 1079]),
+    (21.3, "animal", 0.27, [1474, 934, 1772, 1079]),
+]
+# …and the same kettle ten minutes later in full dark, off the live monitor at 21:03 and
+# the event that fired at 21:07:21 (RACCOON, animal:0.83). Same spot; darker; MegaDetector
+# is now far more sure of it.
+KETTLE_DARK = [
+    (0.0, "animal", 0.22, [1473, 935, 1763, 1079]),
+    (2.0, "animal", 0.72, [1474, 934, 1760, 1079]),
+    (4.0, "animal", 0.44, [1474, 933, 1769, 1079]),
+    (6.0, "animal", 0.48, [1475, 934, 1769, 1079]),
+    (8.0, "animal", 0.83, [1473, 934, 1773, 1079]),
+]
+
+
 def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
     if not cond:
@@ -476,6 +503,45 @@ check("…and is not silently binned either — it is left for SpeciesNet to arb
 conf, unp, sup = f.apply([("person", 0.33, [1260, 567, 1654, 1074])], now=14 * 60 + 1)
 check("quiet furniture is still suppressed outright, not referred",
       len(sup) == 1 and not unp and not conf, f"{len(unp)} unproven, {len(sup)} suppressed")
+
+print("\n11. furniture that grows MORE confident after it was learned (the kettle, 2026-08-17)")
+# The camera was re-aimed during the day, and the black Weber kettle now sits cut off at
+# the bottom-right of the frame. Under IR MegaDetector reads it as `animal`. It was seen
+# from 20:54:21, written off as scenery three minutes later at static_conf 0.57 — the
+# most confident it had looked at dusk — and then it got dark. By 21:03 MegaDetector was
+# giving it 0.72, and at 21:07:21 0.83: more than 0.57 + conf_override, so the detection
+# fell out of the static branch altogether, was `certain`, and fired on its own with no
+# SpeciesNet in the way. It was announced as a RACCOON. The override bar was a snapshot
+# taken at the moment the spot was written off, while the docstring promised "more
+# confident than the spot has ever looked itself" — and it kept looking more confident.
+f = fresh(static_after_secs=180, min_sightings=5)
+for minute in range(0, 5):
+    replay(f, KETTLE_DUSK, t0=minute * 60)             # five minutes of dusk sightings
+kettle = [a for a in f.anchors if a["cls"] == "animal"]
+check("the kettle is learned as scenery", len(kettle) == 1 and kettle[0]["static"],
+      f"{len(kettle)} anchors, static={[a['static'] for a in kettle]}")
+check("…at the confidence it showed at dusk", kettle and kettle[0]["static_conf"] <= 0.60,
+      f"static_conf={kettle[0]['static_conf']:.2f}" if kettle else "-")
+fired = replay(f, KETTLE_DARK, t0=10 * 60)
+check("in full dark it does not walk out of its own scenery memory", not fired,
+      f"{len(fired)} confirmed: {[(c, cf) for c, cf, _ in fired]}")
+# What it must do instead is what section 10 settled for the trough: a confident
+# detection at learned furniture is referred to SpeciesNet, which never named the kettle.
+conf, unp, sup = f.apply([("animal", 0.83, [1473, 934, 1773, 1079])], now=10 * 60 + 9)
+check("0.83 at the learned spot is left for SpeciesNet, not fired and not binned",
+      not conf and len(unp) == 1 and not sup, f"{len(conf)} confirmed {len(unp)} unproven {len(sup)} suppressed")
+conf, unp, sup = f.apply([("animal", 0.48, [1475, 934, 1769, 1079])], now=10 * 60 + 10)
+check("the quiet kettle is still suppressed outright", len(sup) == 1 and not conf and not unp)
+# The per-anchor override that beats the BENCH must be untouched: the bench never scores
+# above 0.43 on its own, and a real person at 0.84 walks straight over it (section 4)…
+check("a real person at 0.84 still overrides the quiet bench",
+      len(replay(fresh_bench(), [(0.0, "person", 0.84, [1215, 860, 1590, 1077])], t0=45 * 60)) == 1)
+# …and must NOT teach the bench their confidence, or the next person needs to beat 1.09.
+fb = fresh_bench()
+replay(fb, [(0.0, "person", 0.84, [1215, 860, 1590, 1077])], t0=45 * 60)
+bench = [a for a in fb.anchors if a["static"]]
+check("the bench does not learn the person's 0.84 as its own", bench and bench[0]["static_conf"] < 0.5,
+      f"static_conf={bench[0]['static_conf']:.2f}" if bench else "no static anchor")
 
 print()
 if FAILS:

@@ -267,6 +267,17 @@ class SceneryFilter:
             certain = conf >= self.conf_certain
             if anchor["static"] and conf <= anchor["static_conf"] + self.conf_override:
                 self._settle(anchor, box, moved=False)   # keep learning where it rests
+                # …and how confident MegaDetector gets about it. The bar a learned spot
+                # is overridden at is "more confident than the spot has ever looked
+                # itself", and that has to keep being true after the spot was written
+                # off: the black kettle (2026-08-17) was learned at dusk at 0.57, and as
+                # it got dark MegaDetector climbed to 0.72 and then 0.83 — over 0.57 +
+                # conf_override, so the detection fell out of this branch, was `certain`,
+                # and fired as a RACCOON with no SpeciesNet in the way. Only a sighting
+                # that stays under the bar teaches it: one that clears it is the real
+                # person at 0.84 walking over the bench (learned at 0.43), and the bench
+                # must not learn THEIR confidence as its own.
+                anchor["static_conf"] = max(anchor["static_conf"], conf)
                 if certain:
                     # Confident — but at a spot already written off as furniture, and a
                     # global confidence bar cannot arbitrate that: MegaDetector holds
