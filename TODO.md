@@ -34,10 +34,76 @@ Then, only if a local stream exists:
   globals (`S`, `LK`, one `CircularRecorder`, one `MonitorServer`, one `SceneryFilter`).
   Three cameras means either three processes (simplest, ~3× the RAM and one model per
   process) or one process with per-camera state objects and a shared model (leaner, needs
-  the globals refactored into a class). Decide with measurements: MegaDetector at 1280px on
-  MPS is the cost driver, and 3 cameras at 3 fps may not fit — per-camera `fps` may have to drop.
+  the globals refactored into a class). MegaDetector at 1280px is the cost driver — measured,
+  see "Hardware" below; note that dropping either `imgsz` or `fps` to make room is ruled out
+  there on evidence, and that one shared model is what keeps 5 cameras inside 8 GB of RAM.
 - **`detector/events/`** is a flat directory; filenames would need a camera prefix, and
   `scenery.json` must be per-camera (learned furniture is specific to where a camera points).
+
+### Hardware, and why `imgsz` cannot be traded for it (measured 2026-08-17)
+
+The whole hardware bill is **one model**. Measured per frame on this Mac's CPU at 4 threads
+(the core count a Pi has): MegaDetector at 1280 **442 ms**, SpeciesNet on a crop 152 ms,
+CLAHE on 1080p 2.7 ms, JPEG encode 2.8 ms, and decoding this camera's stream **0.69 ms/frame**
+(it is 1080p20 at only 0.6 Mbit/s — measured off `buffer/*.ts`). Everything except detection
+is rounding error, so the sizing question is only ever "how many MegaDetector frames/second".
+
+**No Pi runs that on its CPU.** yolov9-c is 102 GFLOPs at 640, so ~408 at our 1280; a Pi 5
+does ~50–70 GFLOPS effective, i.e. **~6–8 s per frame** against the 333 ms that 3 fps needs —
+about 5× the whole machine for *one* camera. An accelerator is mandatory, not an optimisation.
+
+So the obvious move is to drop `imgsz` and buy less hardware. **It does not work**, and the
+reason is not the one you would guess. All 68 recorded clips were replayed at 1280/960/640
+(same CLAHE, same thresholds, same `min_hits`/`window`), then fed through `SceneryFilter`
+exactly as `test_scenery.py` does, with one filter walking the whole archive in time order —
+the closest model of a detector that has been watching. Reproduce with
+**`detector/imgsz_sweep.py run`** then **`report`** (~30 min for the first, seconds after;
+the cache is gitignored). Point it at a different model to re-run this whole comparison —
+which is exactly what you want after quantising for a Hailo:
+
+| imgsz | live clips that fire (of 41) | **furniture clips that fire (of 26)** |
+|---|---|---|
+| 1280 | 38 | **1** |
+| 960  | 36 | **3** |
+| 640  | 35 | **10** |
+
+Missed animals are the *small* half of the cost. The large half is that **a lower `imgsz`
+invents people**: 2 340 detections at 960 and **4 569 at 640** that 1280 never made, 75% of
+them on spots already known to be furniture, and overwhelmingly classed `person`
+(4 274 of the 640 ones). Downscaling turns the bucket, the trough and the plant pot back into
+people — the exact failure the scenery filter exists to fight, arriving faster than it can learn.
+
+- **Loss is confined to small and distant objects**, which is precisely the pond case. Recall
+  of 1280's own detections, by box size: <150px **64.5% / 59.7%** (960/640), 150–300px
+  85.0% / 71.9%, 300–600px 99.1% / 98.8%. Anything close to the camera is unaffected.
+- **The 03:53:07 raccoon dies at 640.** Same animal, same box, confidence **0.75 → 0.36 → 0.14**
+  — under the `animal: 0.20` floor. The 21:18 cat goes 28 frames → 20 → **0**.
+- ⚠️ **A lower `conf` cannot buy it back, and this is the finding that closes the question.**
+  1280 at 0.20 gives 100% recall with 2 216 furniture detections. 640 at 0.10 — the most
+  permissive setting tested — reaches only **88.8%** recall with **5 342** furniture detections.
+  There is no threshold at which a smaller `imgsz` matches 1280 on *either* axis; it is
+  dominated, not traded off. Don't re-derive this.
+- ⚠️ **Nor is lowering per-camera `fps` free**, for a reason specific to this system: an event
+  needs `min_hits=2` within a `window` of 5 *frames* (`detect.py:516`), and the 03:53 raccoon
+  appeared in 2 frames of a 37-second clip. Halving the sample rate halves the chances of the
+  only two it gets.
+- **What the wobble does**, since the scenery filter's whole separation rests on it (rock 0.064
+  vs raccoon 0.062): on the main trough spot, median wobble rises 0.016 → 0.021 → 0.024, but
+  the **max goes 0.124 → 0.090 → 0.353**. At 640 a static spot's box can swing 5.7× the
+  distance the raccoon actually moved, and new fixed spots appear that 1280 never detects at all.
+  Every learned threshold would need re-deriving against a noisier detector.
+
+**Conclusion: 1280 stays, and the hardware has to meet it.** That fixes the requirement at
+3 fps × 1280 per camera. Hailo's model zoo puts yolov9c at 640 at 68.2 FPS on a Hailo-8, so
+~17 FPS at 1280 (÷4 for pixels) — **5 cameras of theoretical NPU capacity, 4 with headroom**;
+a Hailo-8L is half that, so 2. Buy the 26 TOPS AI HAT+, not the 13. Two further practicalities:
+the **Hailo compiler does not run on ARM or macOS** (an x86_64 Linux box or cloud VM is needed
+for the .pt→.onnx→.har→.hef conversion), and **every published Hailo YOLO benchmark is at 640**
+— 1280 is unproven there, so treat the ÷4 as an upper bound and verify before buying five
+cameras' worth. The int8 quantisation that conversion implies lands squarely in the 0.06-sized
+gap the scenery filter measures in, so budget for re-deriving `jitter_slack`/`min_move` on Pi
+footage. ⚠️ Also: put the circular buffer in **tmpfs** — 120 s at 0.6 Mbit/s is only ~9 MB per
+camera, and writing 2-second segments to an SD card continuously will destroy it.
 
 ## 0. Cat/human/raccoon + learning the 4 household people (in progress 2026-08-16)
 

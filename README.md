@@ -267,6 +267,14 @@ and handles SIGTERM too; without that, a detached detector could only ever be fo
 The same stream runs fullscreen on a Pi's HDMI with `mpv`/`ffmpeg` against the RTSP URL
 (or point the Pi's browser at this Mac's go2rtc). To be built.
 
+⚠️ **Viewing is easy; detecting is not.** MegaDetector at 1280 is ~408 GFLOPs a frame, which
+is about five times a whole Pi 5 for a *single* camera at 3 fps — a Pi needs an NPU (the
+26 TOPS AI HAT+ covers 4–5 cameras, the 13 TOPS one only 2). And `imgsz` cannot be dropped to
+avoid that: replaying all 68 recorded clips at 960 and 640 (`detector/imgsz_sweep.py`) shows a
+smaller input mostly *invents* people on garden furniture — 10× the false alarms at 640, while
+the 03:53 raccoon falls from 0.75 to 0.14 and disappears. Measurements and sizing in
+[`TODO.md`](TODO.md) §1.
+
 ## Files
 
 ```
