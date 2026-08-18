@@ -148,8 +148,12 @@ and a long outage counts as one dropout rather than one per packet.
   The mask outline is drawn on the monitor for exactly this reason: if it stops sitting
   on the sill, it is wrong. The mask also costs real coverage — roughly a third of the
   frame is blind while the camera is indoors.
-- Buy the second VIMTAG for `south` (lawn & car port); it is a blank line in local.env
-  and the registry entry already exists, so it should need nothing but the two URLs.
+- **Get the second VIMTAG onto the LAN, as `south`** (lawn & car port). It is bought and
+  paired, and has been unreachable since the moment it paired — `.128`, 100% loss, which
+  the 2.4 GHz finding below explains. Its registry entry already exists, so once it
+  answers it should need nothing but the two URLs in local.env. Note the roles swapped
+  on 2026-08-18: the unit that works is the gate one, and the unreachable `.128` is the
+  one that will be `south`.
 - **Zones + rules** — schema is in `cameras.json` (`zones`, `rules`, `zone_space`) and
   ships empty, so every camera behaves exactly as before until a polygon is drawn. The
   polygons cannot be drawn until the cameras are aimed. Target rules: anyone at the gate,
