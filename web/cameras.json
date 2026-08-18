@@ -33,9 +33,26 @@
       "tile_stream": "main",
       "zone_space": [2560, 1440],
       "detect": {
-        "exclude_roi": [[-200, -100], [-200, 1600], [670, 1600], [-123, -100]]
+        "exclude_roi": [[-200, -100], [-200, 1600], [670, 1600], [-123, -100]],
+        "gate": {
+          "aperture": [[920, 700], [1180, 650], [1180, 840], [920, 875]],
+          "top_row": 672,
+          "height_px": 200,
+          "gate_metres": 1.10,
+          "closed_above": 0.57,
+          "deadband": 0.04,
+          "read_band": [0.0, 0.45],
+          "min_frames": 4,
+          "min_secs": 3.0,
+          "zone": "gate",
+          "child_margin": 0.15,
+          "calibrated": false
+        }
       },
-      "zones": [],
+      "zones": [
+        {"id": "gate", "name": "at the gate",
+         "poly": [[780, 820], [1270, 730], [1340, 890], [830, 1000]]}
+      ],
       "rules": []
     }
   ],
@@ -45,6 +62,8 @@
   "_comment_detect": "detect is per-camera OVERRIDES merged over detector/config.json — put only what differs from the documented defaults there, so the rationale for every threshold stays in one place. A camera watching a pond wants animal thresholds; a camera watching a gate leans on person. monitor_port is fixed per camera rather than derived from position, so a camera's port does not move when another one is added or removed.",
 
   "_comment_mask": "detect.exclude_roi (and roi, its keep-only-this twin) are [[x,y],...] polygons naming the parts of the picture that are NOT the scene — a detection whose FEET land inside an exclude_roi never happened. Unlike scenery.py this learns nothing and grants no override, because it is not a claim about a thing in the garden but about the sensor: the gate Vimtag shoots through a window at a steep angle, so the lower-left third of its frame is window sill, and MegaDetector reads that smooth diagonal slab as `animal` 0.27-0.52 — over the 0.20 threshold. It fired ANIMAL every 30 s through 2026-08-18 and scenery could not stop it: the slab drifts with the light (its top edge wandered 185-317px over the day), every drift resets the static clock, and after 346 sightings it was still not learnable. The gate polygon is measured against the sill edge in real frames and checked BOTH ways — it must eat every box the detector really produced over the sill, and no part of the path, brick, flower bed or gate-foot where an animal could really stand (detector/test_roi.py, which reads the polygon from this file so the two cannot drift). ⚠️ It describes where the sill falls TODAY and nothing more. The camera was moved on 2026-08-18 between one restart and the next; the first polygon, drawn an hour earlier, then covered the brick path and the flower bed while the sill it was drawn for had shrunk to a third of its old width — and the slab got LOUDER as it got smaller, 0.27-0.52 before the move and 0.70-0.82 after. A mask is only ever as good as its last measurement. Points are in zone_space, not raw pixels, and are scaled to the live frame, so turning a camera down to a lower resolution does not move the mask. Both polygons are drawn on the monitor; if the outline stops sitting on the sill, the camera has been knocked and the polygon needs redrawing.",
+
+  "_comment_gate": "detect.gate turns the east camera into a gate watch: is the gate open, and is the small person at it our 2-year-old. `aperture` is the gate opening, read for vertical-bar energy (gate.py) — only the top read_band of it, because a toddler at the gate occludes the BOTTOM and never the top, and an adult occluding all of it leaves the state held rather than guessed. `top_row` is the row of the gate's top rail and it is the whole child/adult test (stature.py): a person standing at the gate is at the gate's own depth, so perspective cancels and head-above-the-rail means adult, head-below means child — no camera calibration anywhere. That works because a 1.10m gate sits between a 2-year-old (87cm) and an adult (170cm); it INVERTS above about 2.0m, so re-check if the gate is replaced. `zone` names the polygon in `zones` whose ground the person must be standing on, so a small figure up the road cannot satisfy it. ⚠️ `calibrated: false` means closed_above is a guess: the closed end was measured on this gate (0.678) but the OPEN end never has been, because nobody has opened the gate in front of the camera — the 0.57 threshold is halfway to four stand-in textures (pavement, path, foliage, hedge: 0.426-0.469). Run `h32 gate` with the gate shut and then open to replace it with a measurement. Every number here is in zone_space and was measured on the INDOOR desk view of 2026-08-18; mounting the camera invalidates all of them.",
 
   "_comment_tile_stream": "Which stream the WALL tile plays: 'sub' (the low-resolution one) or 'main'. This is really a question about how many connections we ask of the camera, not about picture quality. go2rtc opens ONE connection per stream NAME and fans it out to every consumer, so a tile on 'sub' costs the camera a SECOND concurrent RTSP session on top of the one the detector and recorder already share. The Victure is happy with two. The Vimtags are set to 'main' because on 2026-08-17 the Vimtag now on the gate (it was configured as 'south' then) dropped off the network entirely under two — 100% ping loss, ARP incomplete, no recovery without a power cycle — and every single-stream probe before that had been stable. On 'main' the tile, the detector and the recorder all share one producer, so the camera sees exactly one session. The cost is that the browser decodes 2560x1440 for a quarter-screen tile, which an M3 Pro does in hardware; on weaker hardware, or once a Vimtag is proven stable, switch it back to 'sub'. A focused tile always uses main regardless.",
 

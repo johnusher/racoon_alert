@@ -154,13 +154,38 @@ and a long outage counts as one dropout rather than one per packet.
   answers it should need nothing but the two URLs in local.env. Note the roles swapped
   on 2026-08-18: the unit that works is the gate one, and the unreachable `.128` is the
   one that will be `south`.
-- **Zones + rules** — schema is in `cameras.json` (`zones`, `rules`, `zone_space`) and
-  ships empty, so every camera behaves exactly as before until a polygon is drawn. The
-  polygons cannot be drawn until the cameras are aimed. Target rules: anyone at the gate,
-  and the 2-year-old at the gate. ⚠️ Zone coordinates are in each camera's OWN frame size
-  — 2560×1440 for the VIMTAGs, 1920×1080 for the Victure.
+- **Zones + the gate watch — BUILT 2026-08-18, numbers provisional.** `zones` is read by
+  zones.py (feet-in-polygon); the gate watch is gate.py + stature.py, wired in detect.py.
+  Two behaviours, both daytime-only (decided from the picture's saturation, not the
+  clock): the gate opening, and the gate opening with a child-sized person standing at
+  it, which sounds the Mac (alarm.py), banners the monitor and mails.
+  ⚠️ **Still to do, in order:**
+    1. **Open the gate in front of the camera.** `closed_above` is the one number never
+       measured on the real thing — the shut gate reads 0.665-0.678, but the OPEN end
+       comes from stand-in textures (pavement/path/foliage/hedge, 0.426-0.469). Two
+       twenty-second runs fix it: `h32 gate --set closed`, `h32 gate --set open`. It
+       writes the threshold itself and marks `calibrated: true`.
+    2. **Re-measure everything after mounting.** The aperture, `top_row`, `height_px` and
+       the gate zone were all measured on the INDOOR desk view and are worthless once the
+       camera moves. All four polygons are drawn on the monitor and on the detector's own
+       view, so a glance says whether they still sit on the gate.
+    3. `rules` in cameras.json stays empty on purpose. Two behaviours do not need a DSL,
+       and a DSL for two rules is harder to audit than the two rules — which matters when
+       the thing being audited is whether a toddler reaching the road gets noticed.
+  ⚠️ Zone coordinates are in each camera's OWN frame size — 2560×1440 for the VIMTAGs,
+  1920×1080 for the Victure — and are scaled to the live frame (roi.py `scale_poly`).
 - A "draw the zone on the focused tile" tool, once the cameras are aimed. Until then the
-  polygons are hand-written, the same convention `roi`/`exclude_roi` already use.
+  polygons are hand-written, the same convention `roi`/`exclude_roi` already use. This is
+  now the most valuable missing tool: the gate watch needs FOUR polygons re-measured by
+  hand every time the camera moves, and it moved twice on 2026-08-18 alone.
+- **Child/adult: the crouching-adult case is unmeasured.** stature.py compares head to the
+  gate's top rail, and an adult who crouches or bends at the gate is genuinely
+  child-shaped to any size-only measure. The fix is the literature's other method — a
+  pose model's head-to-body ratio, which is scale-invariant and sees the crouch — but it
+  costs a second model, so it waits until the camera is mounted and we know whether this
+  happens in practice. Note the margin cannot be widened to cover it: at a 1.10 m gate the
+  toddler only clears the rail by 0.23 m, so a margin above ~0.20 silently switches the
+  feature off (test_stature.py §6).
 - **Zero cloud comms** (John, 2026-08-17): block each camera's WAN access at the router so
   nothing reaches the vendor cloud. Needs a static DHCP lease per camera first, then a
   firewall rule, then re-verify ONVIF/RTSP still work locally (they should — h32 only ever

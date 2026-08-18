@@ -12,6 +12,7 @@
 #                  scenery and monitor port, so one camera dying cannot blind the others.
 #   h32 detect <camera>          just that one camera, in the foreground
 #   h32 detect <camera> test-event   fire one test event to verify snapshot+recording
+#   h32 gate [--set closed|open]     measure the gate's states so the watch is not guessing
 #   h32 detect stop              stop every running detector and exit
 #   h32 say <text> speak text through the camera's speaker (German voice Anna)
 #   h32 play <f.wav>   play a wav file through the camera's speaker
@@ -227,5 +228,6 @@ case "${1:-start}" in
   play)     shift; "$PY" "$DIR/talk.py" "$@" ;;
   harvest)  shift; "$PY" "$DIR/detector/harvest_refs.py" "$@" ;;
   label)    shift; "$PY" "$DIR/detector/label_animals.py" "$@" ;;
-  *)        echo "usage: h32 [start|stop|restart|status|log|cameras|probe|detect|say|play|harvest|label]" ;;
+  gate)     shift; "$PY" "$DIR/detector/calibrate_gate.py" "$@" ;;
+  *)        echo "usage: h32 [start|stop|restart|status|log|cameras|probe|detect|gate|say|play|harvest|label]" ;;
 esac

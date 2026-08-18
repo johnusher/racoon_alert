@@ -25,7 +25,11 @@ from server import MonitorServer
 from link import LinkMonitor, reconnect_delay
 from notify import EmailNotifier
 from scenery import SceneryFilter
-from roi import FrameMask
+from roi import FrameMask, scale_poly
+from zones import Zones
+from gate import GateWatcher, is_daylight
+from alarm import Alarm
+import stature
 from faces import FaceIdentifier
 from gallery import Gallery
 from speciesnet import SpeciesNetClassifier, short_name
@@ -93,6 +97,25 @@ scenery = SceneryFilter(cfg["scenery_path"],
                         conf_certain=sc.get("conf_certain", 0.70),
                         conf_override=sc.get("conf_override", 0.25))
 signal_timeout = cfg.get("signal_timeout_secs", 8)        # no frames for this long = no signal
+
+# ---- the gate watch: is it open, and is the small person at it our 2-year-old? ----
+# Three separable questions, three modules. gate.py reads the aperture for vertical-bar
+# energy; zones.py says whose feet are on the ground at the gate; stature.py measures a
+# person against the gate's own top rail, which is the only ruler in the scene that needs
+# no camera calibration. Nothing here fires unless a camera actually configures a gate.
+zones = Zones(cfg.get("zones"), cfg.get("zone_space"))
+gcfg = cfg.get("gate", {}) or {}
+gate_on = bool(gcfg.get("aperture"))
+gatewatch = GateWatcher(gcfg.get("aperture"), cfg.get("zone_space"),
+                        closed_above=gcfg.get("closed_above", 0.57),
+                        deadband=gcfg.get("deadband", 0.04),
+                        read_band=gcfg.get("read_band", (0.0, 0.45)),
+                        min_frames=gcfg.get("min_frames", 4),
+                        min_secs=gcfg.get("min_secs", 3.0))
+gate_zone = gcfg.get("zone", "gate")
+gate_top, gate_h = gcfg.get("top_row"), gcfg.get("height_px", 0)
+child_margin = gcfg.get("child_margin", 0.15)
+alarm = Alarm(**(cfg.get("alarm", {}) or {}))
 
 fc = cfg.get("faces", {})
 faces_on = fc.get("enabled", True)
@@ -247,6 +270,9 @@ def enhance(img):
     lab[:, :, 0] = clahe.apply(lab[:, :, 0])
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
+def wh_of(img):
+    return (img.shape[1], img.shape[0])
+
 def detect(img):
     r = model(img, imgsz=imgsz, conf=min_conf, device=DEVICE, verbose=False)[0]
     wh = (img.shape[1], img.shape[0])
@@ -270,6 +296,24 @@ def draw_overlay(img, dets, muted=(), recording=False, banner=None, face_hits=()
     m_roi, m_ex = mask.arrays((im.shape[1], im.shape[0]))
     if m_roi is not None: cv2.polylines(im, [m_roi], True, (0, 200, 120), 2)
     if m_ex is not None: cv2.polylines(im, [m_ex], True, (90, 90, 200), 2)
+    # The gate watch, drawn for the same reason the mask is: these polygons are measured
+    # against one camera position, and seeing them sit on the real gate is the only way
+    # to know they still do. The top rail is the whole child/adult test, so it is a line.
+    if gate_on:
+        wh = (im.shape[1], im.shape[0])
+        for _zid, _zname, pts in zones.polygons(wh):
+            cv2.polylines(im, [np.array(pts, np.int32)], True, (200, 170, 60), 2)
+        ap = np.array(scale_poly(gcfg["aperture"], cfg.get("zone_space") or list(wh), wh),
+                      np.int32)
+        st = gatewatch.state
+        col = (90, 220, 90) if st == "closed" else ((60, 90, 240) if st == "open" else (150, 150, 150))
+        cv2.polylines(im, [ap], True, col, 3)
+        if gate_top is not None:
+            row = int(gate_top * im.shape[0] / ((cfg.get("zone_space") or wh)[1]))
+            cv2.line(im, (ap[:, 0].min(), row), (ap[:, 0].max(), row), (255, 200, 90), 2)
+        sc_txt = f"{gatewatch.last_score:.2f}" if gatewatch.last_score is not None else "—"
+        cv2.putText(im, f"gate {st or 'unknown'} {sc_txt}", (ap[:, 0].min(), max(20, ap[:, 1].min() - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
     for c, cf, box, *_ in muted:                          # scenery: shown, never acted on
         cv2.rectangle(im, (box[0], box[1]), (box[2], box[3]), GREY, 1)
         cv2.putText(im, f"{c} {cf:.2f} scenery", (box[0], max(18, box[1] - 6)),
@@ -553,6 +597,12 @@ print(f"h32 detector [{CAMERA}] {CAM_NAME}  →  monitor port {cfg.get('monitor_
 print(f"    device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display {display_fps}fps"
       f"{' [TEST-EVENT]' if TEST else ''}")
 print(f"    looking at: {mask.describe()}")
+if gate_on:
+    print(f"    gate watch: {gatewatch.describe()}")
+    print(f"                zone '{gate_zone}' of [{zones.describe()}], "
+          f"{stature.describe(gate_top, gate_h, child_margin)}")
+    print(f"                alarm: {alarm.describe()}"
+          + ("" if gcfg.get("calibrated") else "   \u26a0 UNCALIBRATED — run `h32 gate`"))
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))
@@ -658,6 +708,49 @@ try:
         if t - last_hb > 15:
             last_hb = t; print(f"\n[{time.strftime('%H:%M:%S')}] running: {frames} detections done, "
                                f"latest: {status}  ({scenery.describe()})  (monitor {url})")
+        # ---- the gate watch ----
+        # Daytime only, and read from the picture rather than the clock: the toddler is
+        # indoors after dark, and the bar measure has never been checked under infra-red.
+        if gate_on:
+            if not is_daylight(img):
+                monitor.set_gate(None, None)
+            else:
+                change = gatewatch.update(img, t)
+                monitor.set_gate(gatewatch.state, gatewatch.last_score)
+                # Who is standing at the gate? `dets`, NOT `fireable` — the scenery
+                # movement gate exists to hold back things that never move, and a child
+                # standing still at a gate is exactly that. Waiting for him to clear it
+                # is how the 22:48 friend went unannounced (see test_scenery.py §9), and
+                # that trade is wrong when the subject is a 2-year-old at a road.
+                at_gate = []
+                if change:
+                    for c, cf, box in dets:
+                        if c != "person" or not zones.contains(gate_zone, box, wh_of(img)):
+                            continue
+                        verdict, why = stature.classify(box, gate_top, gate_h,
+                                                        margin=child_margin,
+                                                        frame_h=img.shape[0])
+                        at_gate.append((verdict, cf, box, why))
+                if change == "opened":
+                    kids = [a for a in at_gate if a[0] == "child"]
+                    who = kids or at_gate
+                    boxes = [("person", cf, box) for _, cf, box, _ in who]
+                    detail = "; ".join(f"{v}: {why}" for v, _, _, why in at_gate) or "nobody in the zone"
+                    if kids:
+                        tag, level, spoken = "CHILD_AT_GATE", "alarm", "Child at the gate."
+                    else:
+                        tag, level, spoken = "GATE_OPENED", "warn", "The gate has opened."
+                    log(f"GATE OPENED  score={gatewatch.last_score:.3f}  {detail}")
+                    print(f"\n{'🚨' if kids else '🔔'} {tag}: {detail}", flush=True)
+                    alarm.fire(spoken, key=tag)
+                    monitor.raise_alarm(level, spoken.rstrip('.'))
+                    name, _ = fire_event(img, boxes, forced_tag=tag)
+                    if name:
+                        record_until = t + cfg["postroll"] + cfg["seg_secs"]
+                elif change == "closed":
+                    log(f"gate closed  score={gatewatch.last_score:.3f}")
+                    print(f"\n[{time.strftime('%H:%M:%S')}] gate closed", flush=True)
+
         # Nothing cleared the movement gate, but something is there and we would
         # otherwise have fired: ask SpeciesNet whether it is a person standing still.
         if not fireable and sum(hits) >= min_hits and (t - last_event) > cooldown:

@@ -72,6 +72,8 @@
       "margin": 0.05
     }
   },
+  "alarm": {"enabled": true, "voice": "Daniel", "repeat": 3, "min_gap_secs": 20},
+  "_comment_alarm": "Noise on THIS Mac, for the one event that cannot wait for e-mail: a 2-year-old at an open gate. See alarm.py. NOT the camera's speaker \u2014 talk.py is a Victure-only path and the gate VIMTAG has no proven audio-out \u2014 and deliberately not a phone push, which would be the only thing in h32 that leaves the LAN. The voice is ENGLISH (Daniel, en_GB) and the greeting's is German (Anna) on purpose: the greeting is spoken at a visitor standing at the camera, in Berlin, and this is shouted across the room at the household. It sounds `repeat` times then speaks; min_gap_secs stops it machine-gunning, and each alarm keeps its OWN clock so a gate opening can never swallow the child alarm behind it. The gate watch itself is configured per-camera in web/cameras.json (detect.gate), because a gate is a fact about one lens and not about the detector.",
   "auto_record": true,
   "buffer_secs": 120,
   "preroll": 20,
@@ -82,7 +84,7 @@
   "email": {
     "enabled": true,
     "to": null,
-    "trigger_on": ["RACCOON", "CAT", "ANIMAL", "PERSON", "HEDGEHOG"],
+    "trigger_on": ["RACCOON", "CAT", "ANIMAL", "PERSON", "HEDGEHOG", "GATE_OPENED", "CHILD_AT_GATE"],
     "min_gap_secs": 120
   },
   "_comment": "roi/exclude_roi are [[x,y],...] polygons in the camera's OWN zone_space (web/cameras.json), scaled to whatever the stream is actually sending — see roi.py. They belong per-camera in web/cameras.json rather than here, because a mask is a fact about one lens: the gate camera's sill is not the west camera's pond. Detection ignores 'vehicle' (the BBQ trips it). null rtsp_camera_direct / email.to are filled in from local.env (see h32env.py). Email: set enabled=true and fill detector/secrets.json (copy secrets.json.example).",

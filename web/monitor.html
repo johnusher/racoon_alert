@@ -93,6 +93,25 @@
   }
   .cap .link.show{display:inline-flex}
   .cap .link i{width:6px; height:6px; border-radius:50%; background:currentColor; display:block}
+  .cap .gate{
+    display:none; align-items:center; gap:5px; padding:2px 7px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.18); font-size:11px; letter-spacing:.3px}
+  .cap .gate.show{display:inline-flex}
+  .cap .gate.shut{color:var(--good); border-color:rgba(58,210,159,.4)}
+  .cap .gate.open{color:#ff8080; border-color:rgba(255,128,128,.5)}
+  .cap .gate.unknown{color:var(--dim)}
+  /* The alarm. Deliberately loud and deliberately on top of the picture: this exists
+     for a 2-year-old at an open gate, and a subtle alarm is a useless one. */
+  .alarmbar{
+    position:absolute; inset:0; z-index:9; display:none; align-items:center;
+    justify-content:center; text-align:center; pointer-events:none;
+    background:rgba(150,10,10,.30); box-shadow:inset 0 0 0 6px #ff2d2d}
+  .alarmbar.show{display:flex; animation:alarmpulse 1s steps(2,end) infinite}
+  .alarmbar.warn{background:rgba(150,90,10,.22); box-shadow:inset 0 0 0 5px #ffae3d}
+  .alarmbar b{
+    font-size:clamp(15px,3.4vw,34px); font-weight:800; letter-spacing:.5px; color:#fff;
+    text-shadow:0 2px 14px rgba(0,0,0,.9); padding:10px 18px}
+  @keyframes alarmpulse{0%{opacity:1}50%{opacity:.55}100%{opacity:1}}
   .cap .link.good{color:var(--good); border-color:rgba(58,210,159,.4)}
   .cap .link.fair{color:var(--warn); border-color:rgba(255,204,102,.45)}
   .cap .link.poor{color:#ff9d5c; border-color:rgba(255,157,92,.5)}
@@ -264,6 +283,24 @@ function toast(msg){
   clearTimeout(toastT); toastT = setTimeout(()=>toastEl.classList.remove('show'), 1900);
 }
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+// A tone from the browser itself — no asset to ship, no autoplay-blocked <audio>. It is
+// silent until the page has been interacted with, which is a browser rule we cannot
+// bypass and the reason the Mac's own alarm (alarm.py) is the channel that must work.
+let _ac = null;
+function beep(level){
+  try{
+    _ac = _ac || new (window.AudioContext || window.webkitAudioContext)();
+    const n = level === 'alarm' ? 5 : 2;
+    for(let i = 0; i < n; i++){
+      const o = _ac.createOscillator(), g = _ac.createGain(), t = _ac.currentTime + i * 0.34;
+      o.frequency.value = level === 'alarm' ? 1180 : 760;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.28, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+      o.connect(g); g.connect(_ac.destination); o.start(t); o.stop(t + 0.3);
+    }
+  }catch(e){}
+}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -302,12 +339,14 @@ class Tile {
           <video-stream></video-stream>
           <svg class="boxes" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
+        <div class="alarmbar"><b></b></div>
       </div>
       <div class="cap">
         <span class="dot"></span>
         <span class="nm">${esc(this.name)}</span>
         <span class="kit">${esc(this.kit || '')}</span>
         <span class="spacer"></span>
+        <span class="gate" title="Gate state (h32 gate to calibrate)"></span>
         <span class="link" title="Link to the camera"></span>
         <span class="rec"><i></i>REC</span>
       </div>
@@ -508,6 +547,28 @@ class Tile {
     svg.innerHTML = mask + parts.join('');
   }
 
+  /* ---- the gate watch ---- */
+  renderGate(gate, alarm){
+    const chip = this.q('.cap .gate');
+    const st = gate && gate.state;
+    // No gate configured on this camera, or it is dark: say nothing rather than "closed".
+    chip.classList.toggle('show', !!(gate && (st || gate.score != null)));
+    chip.classList.remove('shut', 'open', 'unknown');
+    chip.classList.add(st === 'closed' ? 'shut' : st === 'open' ? 'open' : 'unknown');
+    const sc = gate && gate.score != null ? ` ${gate.score.toFixed(2)}` : '';
+    chip.textContent = st ? `gate ${st}${sc}` : `gate ?${sc}`;
+
+    const bar = this.q('.alarmbar');
+    const on = !!(alarm && alarm.text);
+    bar.classList.toggle('show', on);
+    bar.classList.toggle('warn', on && alarm.level !== 'alarm');
+    if(on){
+      bar.querySelector('b').textContent = alarm.text;
+      // One beep per alarm, not one per poll.
+      if(this._alarmAt !== alarm.t){ this._alarmAt = alarm.t; beep(alarm.level); }
+    }
+  }
+
   /* ---- detector feed ---- */
   async poll(){
     let d;
@@ -538,6 +599,7 @@ class Tile {
     this.q('.cap .rec').classList.toggle('on', !!d.recording);
     this.renderSwitches(d);
     this.renderLink(d.link);
+    this.renderGate(d.gate, d.alarm);
     this.events = (d.events || []).map(e => ({...e, _cam: this}));
 
     if(this.online){

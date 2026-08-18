@@ -49,6 +49,8 @@ class MonitorServer:
         self.frame_w = self.frame_h = 0
         self.last_frame = 0.0     # when the detector last got a frame (epoch seconds)
         self.mjpeg_clients = 0    # nobody watching → don't spend CPU encoding JPEGs
+        self.gate_state, self.gate_score = None, None
+        self.alarm, self.alarm_until = None, 0.0
         self.httpd = None
         # ---- switches the monitor page can flip, live (see /set) ----
         # Runtime only, deliberately: config.json holds the defaults, and a restart
@@ -95,6 +97,17 @@ class MonitorServer:
         with self._lock:
             self.mjpeg_clients = max(0, self.mjpeg_clients + delta)
 
+    def set_gate(self, state=None, score=None):
+        """The gate watch's current reading, for the monitor to show."""
+        with self._lock:
+            self.gate_state, self.gate_score = state, score
+
+    def raise_alarm(self, level, text, secs=30.0):
+        """A banner the monitor cannot miss. Expires on its own so it cannot get stuck."""
+        with self._lock:
+            self.alarm = {"level": level, "text": text, "t": round(time.time(), 2)}
+            self.alarm_until = time.time() + secs
+
     def set_state(self, online, signal, recording, boxes, frame_w, frame_h, last_frame=0.0,
                   faces=()):
         with self._lock:
@@ -114,6 +127,8 @@ class MonitorServer:
                     "last_frame": self.last_frame, "events": self.events,
                     "auto_record": self.auto_record, "email_alerts": self.email_alerts,
                     "email_available": self.email_available,
+                    "gate": {"state": self.gate_state, "score": self.gate_score},
+                    "alarm": self.alarm if time.time() < self.alarm_until else None,
                     "link": self.link.status() if self.link else None}
 
     def add_event(self, tag, snapshot, detail="", clip=None, who=None):

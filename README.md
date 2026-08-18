@@ -99,7 +99,10 @@ prints into `local.env`, `h32 restart`.
 | Live 1080p / 360p video | ✅ working (WebRTC, sub-second; MSE fallback) |
 | 2.5K HEVC video (VIMTAG) | ✅ working — played natively over MSE, no transcode |
 | **Frame masks** (ignore what is not the scene) | ✅ working — `detect.exclude_roi` per camera in `cameras.json`, stated in `zone_space` and scaled to the live frame (`detector/roi.py`) |
-| Detection zones + gate rules | ⏭ schema in `cameras.json`, empty until the cameras are aimed |
+| **Gate open/closed** | ✅ working — vertical-bar energy in the gate's aperture (`detector/gate.py`); `h32 gate` measures the two states |
+| **Child-vs-adult at the gate** | ✅ working — the gate's own top rail is the ruler, so no camera calibration (`detector/stature.py`) |
+| **Named zones** | ✅ working — `zones` in `cameras.json`, matched on where a detection's feet are (`detector/zones.py`) |
+| Detection `rules` schema | ⏭ still empty; the two gate behaviours are in `detect.py` where they can be audited |
 | Listen to camera mic | ✅ working (in the stream) |
 | Digital zoom + pan, snapshot, fullscreen | ✅ working (browser-side) |
 | **Animal/person detector + pre-roll recorder** | ✅ working (`h32 detect`, see `detector/`) |
