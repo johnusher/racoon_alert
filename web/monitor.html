@@ -95,6 +95,12 @@
   .cap .link.fair{color:var(--warn); border-color:rgba(255,204,102,.45)}
   .cap .link.poor{color:#ff9d5c; border-color:rgba(255,157,92,.5)}
   .cap .link.down{color:var(--bad); border-color:var(--bad); background:rgba(255,107,107,.13)}
+  /* Answers no pings at all — link quality is unmeasurable, not bad. Deliberately the
+     quietest style here: a camera behind a wifi extender often never gets ICMP
+     forwarded, and colouring that red over a perfect picture is the false alarm this
+     whole readout exists to avoid. */
+  .cap .link.no-icmp{color:var(--dim); border-color:var(--line)}
+  .cap .link.no-icmp i{background:var(--dim)}
   .cap .link.down i{animation:blink 1s infinite}
   .cap .rec{color:var(--rec); font-weight:700; font-size:11px; display:none;
             align-items:center; gap:5px}
@@ -551,12 +557,17 @@ class Tile {
     if(!L || L.quality === 'unknown'){ el.classList.remove('show'); return; }
     el.className = `link show ${L.quality}`;
     // Round-trip time, not signal bars — see link.py for why there is no RSSI to show.
-    const body = L.quality === 'down'
+    const body = L.quality === 'no-icmp' ? 'no ping'
+      : L.quality === 'down'
       ? (L.down_secs != null ? `down ${L.down_secs}s` : 'down')
       : `${L.rtt_ms}ms${L.loss_pct ? ` · ${L.loss_pct}% loss` : ''}`;
     el.innerHTML = `<i></i>${esc(body)}`;
-    el.title = L.quality === 'down'
-      ? `${L.host} is not answering pings. ${L.dropouts} dropout(s) since this detector started.`
+    el.title = L.quality === 'no-icmp'
+      ? `${L.host} has never answered a ping, so link quality cannot be measured — `
+        + `common for a camera behind a wifi extender. This is NOT a fault: whether the `
+        + `camera works is answered by the picture and the frame rate.`
+      : L.quality === 'down'
+      ? `${L.host} stopped answering pings. ${L.dropouts} dropout(s) since this detector started.`
       : `Link to ${L.host}: ${L.quality} — ${L.rtt_ms}ms round trip, ${L.loss_pct}% packet `
         + `loss over the last ${L.samples} probes, ${L.dropouts} dropout(s) this run.\n`
         + `This is reachability measured from here; the camera reports no wifi signal strength.`;

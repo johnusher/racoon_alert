@@ -158,6 +158,15 @@ class LinkMonitor:
 
         if not samples:
             quality = "unknown"
+        elif not got and last_ok is None:
+            # It has NEVER answered a ping. That is not the same as being down: a camera
+            # behind a wifi extender may simply never have ICMP forwarded to it, and the
+            # south VIMTAG is exactly that (2026-08-18 — ONVIF discovery finds it, video
+            # streams, pings vanish). Calling that "down" in red over a perfect picture
+            # is crying wolf, and the whole point of this module is not to. Whether the
+            # camera is really usable is answered by whether FRAMES arrive, which the
+            # detector reports separately.
+            quality = "no-icmp"
         elif not got:
             quality = "down"
         elif loss > self.FAIR_LOSS or rtt > self.FAIR_RTT:
@@ -176,6 +185,9 @@ class LinkMonitor:
         s = self.status()
         if s["quality"] == "unknown":
             return "link: no host to watch" if not s["host"] else "link: measuring…"
+        if s["quality"] == "no-icmp":
+            return (f"link: {s['host']} does not answer pings — link quality unmeasurable, "
+                    f"watch the frame rate instead")
         if s["quality"] == "down":
             d = f", down {s['down_secs']}s" if s["down_secs"] is not None else ""
             return f"link: {s['host']} DOWN ({s['dropouts']} dropout(s){d})"

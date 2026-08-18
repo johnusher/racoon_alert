@@ -121,8 +121,13 @@ detect() {
   fi
 
   stop_detectors
-  # One browser tab for the whole wall, not one per camera.
+  # One browser tab for the whole wall, not one per camera — so the detectors are told
+  # to keep quiet and the launcher opens the monitor once, here. Setting H32_NO_BROWSER
+  # WITHOUT this open is why `h32 detect` stopped opening anything at all.
   export H32_NO_BROWSER=1
+  if [[ "$1" != "test-event" && -z "$H32_NO_OPEN" ]]; then
+    open "${URL}monitor.html"
+  fi
 
   if (( ${#ids} == 1 )); then
     echo "h32: starting detector for '${ids[1]}' (Ctrl-C to stop)…"
