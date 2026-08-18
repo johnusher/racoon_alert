@@ -27,9 +27,17 @@ Two more rules that exist so this cannot cry wolf:
     an open gate must not fire "the gate just opened";
   • a change needs min_frames of agreement, so one odd frame is never an opening.
 
-⚠️ `closed_above` is provisional until somebody opens the gate in front of the camera:
-the "open" end of the scale has only ever been measured on stand-in patches (pavement,
-foliage, hedge), never on the real thing. `h32 gate calibrate` measures it properly.
+`closed_above` was measured on the real gate on 2026-08-18: shut-and-empty 0.658-0.667,
+open 0.502-0.537, and — the useful control — shut WITH somebody standing at it 0.578-0.663.
+A body costs about 0.08 and an open gate about 0.13, so the measure is reading the gate
+rather than the visitor. `h32 gate` re-measures it.
+
+⚠️ The share is blind in the dark and does not know it. A ratio of two small numbers is
+still a ratio, so a black window at midnight yields a confident-looking score about
+nothing at all — which is why `min_edge` exists: below that much ABSOLUTE edge energy in
+the aperture there is no gate visible to have an opinion about, and score() returns None.
+Daylight measures about 60. is_daylight() is the other half of that guard and is the
+weaker half indoors, where a lit room keeps saturation at 71 well after dark.
 """
 import cv2
 import numpy as np
@@ -63,12 +71,13 @@ class GateWatcher:
     """
 
     def __init__(self, aperture, zone_space=None, closed_above=0.57, deadband=0.04,
-                 read_band=(0.0, 0.45), min_frames=4, min_secs=1.0):
+                 read_band=(0.0, 0.45), min_frames=4, min_secs=1.0, min_edge=0.0):
         self.aperture = [list(p) for p in aperture] if aperture else None
         self.zone_space = list(zone_space) if zone_space else None
         self.closed_above, self.deadband = closed_above, deadband
         self.read_band = tuple(read_band)
         self.min_frames, self.min_secs = min_frames, min_secs
+        self.min_edge = min_edge
         self.state = None                  # None = unknown, then "closed" / "open"
         self.last_score = None
         self.changed_at = 0.0
@@ -98,21 +107,41 @@ class GateWatcher:
         return self._cache[key]
 
     # ---- the measure ----
-    def score(self, frame):
-        """Vertical share of the edge energy in the read band. None if unreadable."""
+    def edges(self, frame):
+        """(vertical share, absolute edge energy) in the read band. (None, None) if unreadable.
+
+        The absolute energy is the honest answer to "can I see the gate at all?". The
+        share alone cannot tell a gate apart from a dark window, because a ratio of two
+        small numbers is still a ratio — it stays confident while the picture underneath
+        it disappears.
+        """
         if frame is None or frame.size == 0 or not self.aperture:
-            return None
+            return None, None
         m = self._mask(frame.shape)
         if m.sum() < 200:                              # too small to mean anything
-            return None
+            return None, None
         g = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32),
                              (0, 0), 1.2)
         gx = np.abs(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3))[m]
         gy = np.abs(cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3))[m]
         tot = gx.mean() + gy.mean()
         if tot < 1e-3:                                 # a flat grey patch says nothing
+            return None, float(tot)
+        return float(gx.mean() / tot), float(tot)
+
+    def score(self, frame):
+        """Vertical share of the edge energy in the read band. None if unreadable.
+
+        Returns None when the aperture is too dark or too flat to carry the measure —
+        below `min_edge` there is no gate visible to have an opinion about, and an
+        opinion formed there would be an opinion about a reflection.
+        """
+        share, energy = self.edges(frame)
+        if share is None:
             return None
-        return float(gx.mean() / tot)
+        if self.min_edge and energy < self.min_edge:
+            return None
+        return share
 
     # ---- state ----
     def update(self, frame, now):
@@ -147,4 +176,5 @@ class GateWatcher:
         s = f"{self.last_score:.2f}" if self.last_score is not None else "—"
         band = f"{int(self.read_band[0] * 100)}-{int(self.read_band[1] * 100)}%"
         return (f"{self.state or 'unknown'} (score {s}, closed above "
-                f"{self.closed_above:.2f}±{self.deadband:.2f}, top {band} of the aperture)")
+                f"{self.closed_above:.2f}±{self.deadband:.2f}, top {band} of the aperture"
+                + (f", needs edge energy ≥{self.min_edge:.0f}" if self.min_edge else "") + ")")

@@ -70,3 +70,4 @@ detector/overnight.log
 
 # cached inference from detector/imgsz_sweep.py — regenerable, one JSON per clip
 detector/sweep_cache/
+detector/gate_night.*.jsonl

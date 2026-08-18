@@ -111,7 +111,23 @@ gatewatch = GateWatcher(gcfg.get("aperture"), cfg.get("zone_space"),
                         deadband=gcfg.get("deadband", 0.04),
                         read_band=gcfg.get("read_band", (0.0, 0.45)),
                         min_frames=gcfg.get("min_frames", 4),
-                        min_secs=gcfg.get("min_secs", 3.0))
+                        min_secs=gcfg.get("min_secs", 3.0),
+                        min_edge=gcfg.get("min_edge", 0.0))
+gate_hours = gcfg.get("active_hours")            # [from, to) local hours, or null for any
+
+
+def gate_awake(now):
+    """Is the gate watch allowed an opinion at this hour?
+
+    Belt and braces over is_daylight(). That test asks the PICTURE whether it is night,
+    which is right for a camera that goes infra-red at dusk — and wrong for this one
+    while it sits indoors, where a lit room keeps the saturation high at 21:28 and the
+    gate outside is invisible behind the reflection. Drop this once it is mounted.
+    """
+    if not gate_hours:
+        return True
+    lo, hi = gate_hours
+    return lo <= time.localtime(now).tm_hour < hi
 gate_zone = gcfg.get("zone", "gate")
 gate_top, gate_h = gcfg.get("top_row"), gcfg.get("height_px", 0)
 child_margin = gcfg.get("child_margin", 0.15)
@@ -599,6 +615,8 @@ print(f"    device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display 
 print(f"    looking at: {mask.describe()}")
 if gate_on:
     print(f"    gate watch: {gatewatch.describe()}")
+    print(f"                active {f'{gate_hours[0]:02d}:00-{gate_hours[1]:02d}:00' if gate_hours else 'any hour'}"
+          f" and only while the frame is in colour")
     print(f"                zone '{gate_zone}' of [{zones.describe()}], "
           f"{stature.describe(gate_top, gate_h, child_margin)}")
     print(f"                alarm: {alarm.describe()}"
@@ -712,8 +730,11 @@ try:
         # Daytime only, and read from the picture rather than the clock: the toddler is
         # indoors after dark, and the bar measure has never been checked under infra-red.
         if gate_on:
-            if not is_daylight(img):
-                monitor.set_gate(None, None)
+            if not (gate_awake(t) and is_daylight(img)):
+                # Still measure it — the score is published so the monitor and an
+                # overnight trace can see what the dark does to it — but do not let it
+                # move the state, and so never let it fire.
+                monitor.set_gate(None, gatewatch.score(img))
             else:
                 change = gatewatch.update(img, t)
                 monitor.set_gate(gatewatch.state, gatewatch.last_score)
