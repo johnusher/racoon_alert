@@ -17,8 +17,9 @@ the only one that normalises away illumination. Reading only the UPPER band of t
 aperture scored the same (0.676), and that is what makes the measure survive the case it
 exists for: a 2-year-old at the gate occludes the bottom of it, never the top.
 
-⚠️ The "open" column above is a PROXY. Nobody has opened the gate in front of this camera
-yet, so `closed_above` is provisional until they do — see `h32 gate calibrate`.
+The "open" column above was a PROXY, and on 2026-08-18 20:2x the real gate was finally
+opened and shut in front of the camera. It held up — see section 10, which is the real
+measurement and is now what `closed_above` is set from.
 
 Run:  ../.venv/bin/python detector/test_gate.py
 """
@@ -145,6 +146,40 @@ colour = np.dstack([np.full((80, 80), 30, np.uint8), np.full((80, 80), 90, np.ui
 grey = np.repeat(np.full((80, 80, 1), 120, np.uint8), 3, axis=2)
 check("a colour frame is daylight", is_daylight(colour))
 check("a monochrome IR frame is not", not is_daylight(grey))
+
+print("\n10. the real gate, opened and shut (2026-08-18 20:2x, 345 live samples)")
+# A trace of the score while the gate was opened, held open ~10s and shut again. It gave
+# a control nobody thought to ask for: the middle row is the gate STILL SHUT with a person
+# standing at it, which is the case that could have faked an opening. It does not — a body
+# costs about 0.08 and an open gate costs 0.13, and the two do not meet.
+#
+#   closed, nobody in shot  0.658-0.667   n=318
+#   closed, PERSON at it    0.578-0.663   n=12    <- the control
+#   open (person also there) 0.502-0.537  n=15
+#
+# Timing, from the same trace: `open` was declared 2.8s after the score fell and `closed`
+# 0.7s after it recovered, which is min_frames doing its job rather than dithering.
+import json as _json, os as _os
+_reg = _json.load(open(_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                     "web", "cameras.json")))
+_g = next(c["detect"]["gate"] for c in _reg["cameras"]
+          if c["id"] == "gate" and (c.get("detect") or {}).get("gate"))
+_thr, _band = _g["closed_above"], _g["deadband"]
+def _verdict(x):
+    return "closed" if x >= _thr + _band else ("open" if x <= _thr - _band else "hold")
+check("the shipped threshold is a measurement, not a guess", _g.get("calibrated") is True,
+      f"closed_above {_thr} ± {_band}")
+for lo, hi in [(0.658, 0.667)]:
+    check("a shut gate with nobody there reads closed",
+          _verdict(lo) == _verdict(hi) == "closed", f"{lo}-{hi}")
+for v in (0.502, 0.520, 0.537):
+    check(f"an open gate reads open ({v})", _verdict(v) == "open")
+# The control: never `open`. Holding is a correct answer — that is what the deadband buys.
+for v in (0.578, 0.596, 0.629, 0.663):
+    check(f"a person at a SHUT gate never reads open ({v})", _verdict(v) != "open",
+          _verdict(v))
+check("and the two dips land in the deadband, so the state is held",
+      _verdict(0.578) == "hold" and _verdict(0.596) == "hold")
 
 print("\n9. it says so when it cannot see")
 g = watcher()

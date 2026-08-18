@@ -160,11 +160,15 @@ and a long outage counts as one dropout rather than one per packet.
   clock): the gate opening, and the gate opening with a child-sized person standing at
   it, which sounds the Mac (alarm.py), banners the monitor and mails.
   ⚠️ **Still to do, in order:**
-    1. **Open the gate in front of the camera.** `closed_above` is the one number never
-       measured on the real thing — the shut gate reads 0.665-0.678, but the OPEN end
-       comes from stand-in textures (pavement/path/foliage/hedge, 0.426-0.469). Two
-       twenty-second runs fix it: `h32 gate --set closed`, `h32 gate --set open`. It
-       writes the threshold itself and marks `calibrated: true`.
+    1. ~~Open the gate in front of the camera.~~ **DONE 2026-08-18 20:2x** — traced live
+       through an open-and-shut, 345 samples, and `closed_above` is now 0.598±0.030
+       measured rather than the 0.57 guess. Separation is clean: shut-and-empty
+       0.658-0.667, open 0.502-0.537. The trace also produced a control worth keeping:
+       the gate SHUT with a person standing at it reads 0.578-0.663, so a body costs
+       ~0.08 and an open gate ~0.13, and the two do not meet — the measure is reading the
+       gate and not the visitor. The two 0.578/0.596 dips land in the deadband and HOLD
+       the state, which is what the deadband was put there for. Timing: `open` declared
+       2.8s after the score fell, `closed` 0.7s after it recovered.
     2. **Re-measure everything after mounting.** The aperture, `top_row`, `height_px` and
        the gate zone were all measured on the INDOOR desk view and are worthless once the
        camera moves. All four polygons are drawn on the monitor and on the detector's own

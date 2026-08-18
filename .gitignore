@@ -31,6 +31,11 @@ detector/samples/_*.jpg
 # so there is one file per camera (scenery.west.json, scenery.south.json, …)
 detector/scenery.json
 detector/scenery.*.json
+
+# gate calibration samples — hundreds of raw scores measured against ONE camera position,
+# so they belong to this house and not to the repo. The number DERIVED from them
+# (closed_above/deadband) is committed, in web/cameras.json, where it can be read.
+detector/gate.*.json
 # enrolled faces: real people's biometrics. This repo is public — never commit these.
 # Deliberately a wildcard: a half-written faces_store.npz.tmp.npz is just as personal.
 detector/faces_store*

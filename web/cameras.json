@@ -39,14 +39,14 @@
           "top_row": 672,
           "height_px": 200,
           "gate_metres": 1.10,
-          "closed_above": 0.57,
-          "deadband": 0.04,
+          "closed_above": 0.598,
+          "deadband": 0.030,
           "read_band": [0.0, 0.45],
           "min_frames": 4,
           "min_secs": 3.0,
           "zone": "gate",
           "child_margin": 0.15,
-          "calibrated": false
+          "calibrated": true
         }
       },
       "zones": [
