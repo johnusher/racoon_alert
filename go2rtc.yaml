@@ -26,15 +26,15 @@ streams:
   west: "${H32_CAM_WEST}"
   west_sub: "${H32_CAM_WEST_SUB}"
 
-  # south — Vimtag 2.5K, lawn & car port. 2560x1440 + 640x360 HEVC, AAC audio.
+  # south — Vimtag 2.5K, lawn & car port. No such camera yet; expands to empty.
+  south: "${H32_CAM_SOUTH}"
+  south_sub: "${H32_CAM_SOUTH_SUB}"
+
+  # gate — Vimtag 2.5K, east entrance gate. 2560x1440 + 640x360 HEVC, AAC audio.
   # ONVIF rather than RTSP, and NOT as a convenience: this camera hands out a
   # single-use RTSP token that changes on every connection (measured 2026-08-17), so
   # there is no URL that could be written down here. onvif:// makes go2rtc ask the
   # camera for a fresh one each time it connects, which is the only thing that works.
-  south: "${H32_CAM_SOUTH}"
-  south_sub: "${H32_CAM_SOUTH_SUB}"
-
-  # gate — Vimtag 2.5K, east entrance gate. Not yet on the network.
   gate: "${H32_CAM_GATE}"
   gate_sub: "${H32_CAM_GATE_SUB}"
 

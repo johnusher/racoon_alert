@@ -6,8 +6,14 @@ Short-lived notes live in commit messages; this file is for threads that span se
 
 Goal: every camera on one screen, the same detector/AI running across all of them.
 **The gating unknown is answered: the VIMTAGs do expose a local stream.** Built and
-running today with `west` (Victure) + `south` (VIMTAG); `gate` is a blank line in
-local.env until the second VIMTAG is mounted.
+running today with `west` (Victure) + `gate` (VIMTAG); `south` is a blank line in
+local.env until a second VIMTAG is bought.
+
+⚠️ **The one VIMTAG was configured as `south` until 2026-08-18, when it turned out to be
+pointing east at the entrance gate rather than south at the lawn, and was re-identified
+as `gate`.** It is the same physical camera at `.100` throughout, so every dated note
+below that says `south` — the network dropout, the two-session theory, the 2.4 GHz cell
+— is about the camera now called `gate`. Its history moved with it to `events/gate/`.
 
 ### What the VIMTAG actually is (measured 2026-08-17, not taken from the listing)
 
@@ -133,7 +139,17 @@ and a long outage counts as one dropout rather than one per packet.
 
 ### Still to do
 
-- Mount `gate`, then add its two lines to local.env. Nothing else should be needed.
+- **Mount `gate` outdoors, then redraw its mask.** It is indoors on a desk shooting
+  through a window at a steep angle, so the lower-left third of its sensor is window
+  sill — MegaDetector calls that slab `animal` 0.27-0.52 and it fired every 30 s all of
+  2026-08-18 until `detect.exclude_roi` was added in `cameras.json`. That polygon
+  describes where the sill happens to fall TODAY. Moving or even knocking the camera
+  invalidates it, and once the camera is outdoors it should be deleted, not adjusted.
+  The mask outline is drawn on the monitor for exactly this reason: if it stops sitting
+  on the sill, it is wrong. The mask also costs real coverage — roughly a third of the
+  frame is blind while the camera is indoors.
+- Buy the second VIMTAG for `south` (lawn & car port); it is a blank line in local.env
+  and the registry entry already exists, so it should need nothing but the two URLs.
 - **Zones + rules** — schema is in `cameras.json` (`zones`, `rules`, `zone_space`) and
   ships empty, so every camera behaves exactly as before until a polygon is drawn. The
   polygons cannot be drawn until the cameras are aimed. Target rules: anyone at the gate,

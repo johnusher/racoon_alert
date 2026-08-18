@@ -25,6 +25,7 @@ from server import MonitorServer
 from link import LinkMonitor, reconnect_delay
 from notify import EmailNotifier
 from scenery import SceneryFilter
+from roi import FrameMask
 from faces import FaceIdentifier
 from gallery import Gallery
 from speciesnet import SpeciesNetClassifier, short_name
@@ -68,8 +69,9 @@ min_hits, window = cfg.get("min_hits", 2), cfg.get("window", 5)
 cooldown = cfg.get("cooldown_secs", 30)
 use_clahe = cfg.get("clahe", True)
 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-roi = np.array(cfg["roi"], np.int32) if cfg.get("roi") else None
-exclude = np.array(cfg["exclude_roi"], np.int32) if cfg.get("exclude_roi") else None
+# Parts of the frame that are not the scene: the gate camera shoots through a window and
+# a third of its sensor is window sill. Stated in zone_space and scaled here. See roi.py.
+mask = FrameMask(cfg.get("roi"), cfg.get("exclude_roi"), cfg.get("zone_space"))
 events_dir = cfg["events_dir"]; os.makedirs(events_dir, exist_ok=True)
 logf = open(os.path.join(events_dir, "events.log"), "a")
 COLORS = {"animal": (80, 80, 255), "person": (210, 180, 60), "vehicle": (120, 120, 120),
@@ -245,18 +247,13 @@ def enhance(img):
     lab[:, :, 0] = clahe.apply(lab[:, :, 0])
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-def in_roi(box):
-    pt = (int((box[0] + box[2]) / 2), int(box[3]))       # foot point
-    if roi is not None and cv2.pointPolygonTest(roi, pt, False) < 0: return False
-    if exclude is not None and cv2.pointPolygonTest(exclude, pt, False) >= 0: return False
-    return True
-
 def detect(img):
     r = model(img, imgsz=imgsz, conf=min_conf, device=DEVICE, verbose=False)[0]
+    wh = (img.shape[1], img.shape[0])
     dets = []
     for b in r.boxes:
         cls = NAMES[int(b.cls)]; conf = float(b.conf); box = [int(x) for x in b.xyxy[0]]
-        if cls in ignore or conf < conf_map.get(cls, 1.0) or not in_roi(box):
+        if cls in ignore or conf < conf_map.get(cls, 1.0) or not mask.allows(box, wh):
             continue
         dets.append((cls, conf, box))
     return dets
@@ -268,7 +265,11 @@ def draw_overlay(img, dets, muted=(), recording=False, banner=None, face_hits=()
         cv2.rectangle(im, (fb[0], fb[1]), (fb[2], fb[3]), col, 2)
         cv2.putText(im, f"{who or '?'} {sc:.2f}", (fb[0], max(14, fb[1] - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
-    if roi is not None: cv2.polylines(im, [roi], True, (0, 200, 120), 2)
+    # Both masks are drawn: a mask you cannot see is a mask you cannot check against the
+    # picture, which is the only way to know it is still on the sill and not on the path.
+    m_roi, m_ex = mask.arrays((im.shape[1], im.shape[0]))
+    if m_roi is not None: cv2.polylines(im, [m_roi], True, (0, 200, 120), 2)
+    if m_ex is not None: cv2.polylines(im, [m_ex], True, (90, 90, 200), 2)
     for c, cf, box, *_ in muted:                          # scenery: shown, never acted on
         cv2.rectangle(im, (box[0], box[1]), (box[2], box[3]), GREY, 1)
         cv2.putText(im, f"{c} {cf:.2f} scenery", (box[0], max(18, box[1] - 6)),
@@ -551,6 +552,7 @@ threading.Thread(target=publish_loop, daemon=True).start()
 print(f"h32 detector [{CAMERA}] {CAM_NAME}  →  monitor port {cfg.get('monitor_port')}")
 print(f"    device={DEVICE}, model={cfg['model']}, detect~{det_fps}fps, display {display_fps}fps"
       f"{' [TEST-EVENT]' if TEST else ''}")
+print(f"    looking at: {mask.describe()}")
 print(f"    scenery filter: {'on' if scenery_on else 'OFF'} — {scenery.describe()}")
 print(f"    face id: {'on' if faces_on else 'off'} — {faces.describe()}"
       + ("   (known people SUPPRESS events)" if faces_on and known_suppresses else ""))

@@ -98,6 +98,7 @@ prints into `local.env`, `h32 restart`.
 | **Camera link health** (RTT, packet loss, dropouts) | ✅ working — these cameras report no WiFi RSSI, so reachability is measured instead (`detector/link.py`) |
 | Live 1080p / 360p video | ✅ working (WebRTC, sub-second; MSE fallback) |
 | 2.5K HEVC video (VIMTAG) | ✅ working — played natively over MSE, no transcode |
+| **Frame masks** (ignore what is not the scene) | ✅ working — `detect.exclude_roi` per camera in `cameras.json`, stated in `zone_space` and scaled to the live frame (`detector/roi.py`) |
 | Detection zones + gate rules | ⏭ schema in `cameras.json`, empty until the cameras are aimed |
 | Listen to camera mic | ✅ working (in the stream) |
 | Digital zoom + pan, snapshot, fullscreen | ✅ working (browser-side) |

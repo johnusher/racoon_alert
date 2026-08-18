@@ -66,6 +66,8 @@
   .b-animal{stroke:#ff5050} .t-animal{fill:#ff5050}
   .b-person{stroke:#3cb4d2} .t-person{fill:#3cb4d2}
   .b-vehicle{stroke:#9aa4b0} .t-vehicle{fill:#9aa4b0}
+  .boxes polygon.mask{fill:rgba(255,80,80,.07); stroke:#ff5050; stroke-width:1.5;
+    stroke-dasharray:10 8; vector-effect:non-scaling-stroke; opacity:.55}
   .b-scenery{stroke:var(--scenery); stroke-width:1.5; stroke-dasharray:7 5}
   .t-scenery{fill:var(--scenery); font-size:15px; font-weight:400}
   .b-face{stroke:#96e6a1; stroke-width:2} .t-face{fill:#96e6a1}
@@ -470,10 +472,23 @@ class Tile {
     const h = this.srcH || (this.video && this.video.videoHeight) || 0;
     if(w && h) this.q('.boxes').setAttribute('viewBox', `0 0 ${w} ${h}`);
   }
+  // The part of the picture the detector is told to ignore (detect.exclude_roi in
+  // cameras.json). Drawn because a mask you cannot see is a mask you cannot check: the
+  // gate camera's covers window sill, and if the camera is ever knocked the outline
+  // stops matching the sill, which is the only warning you get. Points are in the
+  // camera's zone_space, so they are scaled to whatever the stream is really sending.
+  maskPoly(){
+    const pts = (this.detect || {}).exclude_roi;
+    if(!pts || !pts.length || !this.srcW || !this.srcH) return '';
+    const [zw, zh] = this.zone_space || [this.srcW, this.srcH];
+    const p = pts.map(([x,y]) => `${(x*this.srcW/zw).toFixed(1)},${(y*this.srcH/zh).toFixed(1)}`);
+    return `<polygon class="mask" points="${p.join(' ')}"/>`;
+  }
   drawBoxes(){
     const svg = this.q('.boxes');
+    const mask = (this.showBoxes && svg.getAttribute('viewBox')) ? this.maskPoly() : '';
     if(!this.showBoxes || !svg.getAttribute('viewBox') ||
-       (!this.boxes.length && !this.faceBoxes.length)){ svg.innerHTML = ''; return; }
+       (!this.boxes.length && !this.faceBoxes.length)){ svg.innerHTML = mask; return; }
     // Label size is in FRAME units, so it stays readable whether the source is the
     // Victure's 1920 or a Vimtag's 2560, and whether the tile is a quarter or the wall.
     const fs = Math.max(12, Math.round((this.srcW || 1920) / 64));
@@ -490,7 +505,7 @@ class Tile {
       parts.push(`<rect class="b-${kind}" x="${x1}" y="${y1}" width="${Math.max(0,x2-x1)}" height="${Math.max(0,y2-y1)}" rx="2"/>`
         + `<text class="t-${kind}" font-size="${fs*0.8}" x="${x1}" y="${Math.max(fs,y1-fs*0.3)}">${esc(f.who||'?')} ${f.score}</text>`);
     }
-    svg.innerHTML = parts.join('');
+    svg.innerHTML = mask + parts.join('');
   }
 
   /* ---- detector feed ---- */
